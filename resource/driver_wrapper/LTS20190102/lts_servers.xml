@@ -1,0 +1,28 @@
+<?xml version="1.0" encoding="gb2312"?>
+<root>
+   <broker>2011</broker>
+   <group name="n1">
+     <md>
+       <server>tcp://116.228.234.66:54513</server>
+     </md>
+     <trade>
+       <server>ssl://116.228.234.66:54509</server>
+     </trade>
+     <query>
+       <server>ssl://116.228.234.66:54511</server>
+     </query>
+   </group>
+
+   <group name="n2">
+     <md>
+       <server>tcp://211.144.195.163:54513</server>
+     </md>
+     <trade>
+       <server>tcp://211.144.195.163:54505</server>
+     </trade>
+     <query>
+       <server>tcp://211.144.195.163:54506</server>
+     </query>
+   </group>
+
+</root>
