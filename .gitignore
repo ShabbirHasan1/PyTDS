@@ -129,5 +129,5 @@ dmypy.json
 .pyre/
 
 # customized
-resource/
 .idea/
+resource/cache
