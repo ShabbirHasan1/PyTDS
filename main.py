@@ -17,6 +17,7 @@ if __name__ == '__main__':
     opt_contract = get_contract().opt_contract
 
     option_trade = get_option_trade()
+    option_trade.login_account(account["237"])
     option_trade.login_account(account["222"])
 
     import threading

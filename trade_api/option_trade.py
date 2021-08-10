@@ -81,12 +81,14 @@ class OptionTrade(object):
         if err.errid != 0:
             logging.error("创建api发生错误: " + str(get_data(err)))
             return
+        logging.info("opt_api_t created for account: {0}".format(account_info["account_id"]))
 
         self.set_api_callback(opt_api_t)
         self.opt_wrapper.opt_api_initialize(opt_api_t, byref(err))
         if err.errid != 0:
             logging.error("初始化api发生错误: " + str(get_data(err)))
             return
+        logging.info("opt_api_t initialized for account: {0}".format(account_info["account_id"]))
 
         self.opt_wrapper.opt_config_destroy(api_config)
 
@@ -120,8 +122,9 @@ class OptionTrade(object):
                     if not os.path.exists(cur_account_cache_path):
                         try:
                             os.makedirs(cur_account_cache_path + e["Value"][1:])
-                        except:
                             logging.info("no cache folder, created")
+                        except:
+                            pass
                     e["Value"] = cur_account_cache_path + e["Value"][1:]
 
                 self.opt_wrapper.opt_config_set_attribute(api_config, e["Name"].encode(), e["Value"].encode())
@@ -257,7 +260,12 @@ class OptionTrade(object):
         api_pool.set_status_by_api(opt_api_t, "connected")
 
         account_id = api_pool.get_api_info_by_api_t(opt_api_t).get_account_id()
-        logging.info("connect {0} successfully".format(account_id))
+        logging.info("connect account {0} successfully".format(account_id))
+
+        option_trade = get_option_trade()
+        seq_id = option_trade.gen_seq_num()
+        err = STesError()
+        option_trade.opt_wrapper.opt_api_login(opt_api_t, seq_id, byref(err))
 
     @staticmethod
     def on_disconnected(opt_api_t: int, error: POINTER(STesError)) -> None:
@@ -267,19 +275,19 @@ class OptionTrade(object):
     def on_rsp_login(opt_api_t: int, rsp_login: POINTER(STesRspLogin), error: POINTER(STesError), req_id: int,
                      is_last: bool) -> None:
         err = error.contents
-        if is_last:
-            if err.errid != 0:
-                logging.warning("error occurred on login, err msg: " + str(get_data(err)))
-                return
-            rsp_login_data = rsp_login.contents
-            client_id = rsp_login_data.clientID
-            api_pool = get_api_pool()
-            api_info = api_pool.get_api_info_by_api_t(opt_api_t)
-            api_info.update_client_id(client_id)
-            api_info.update_status("login")
+        # if is_last:
+        if err.errid != 0:
+            logging.warning("error occurred on login, err msg: " + str(get_data(err)))
+            return
+        rsp_login_data = rsp_login.contents
+        client_id = rsp_login_data.clientID
+        api_pool = get_api_pool()
+        api_info = api_pool.get_api_info_by_api_t(opt_api_t)
+        api_info.update_client_id(client_id)
+        api_info.update_status("login")
 
-            account_id = api_info.get_account()
-            logging.info("login {0} successfully".format(account_id))
+        account_id = api_info.get_account_id()
+        logging.info("login account {0} successfully".format(account_id))
 
     @staticmethod
     def on_rsp_logout(opt_api_t: int, rsp_logout: POINTER(STesRspLogout), error: POINTER(STesError), req_id: int,
@@ -301,7 +309,7 @@ class OptionTrade(object):
         api_pool.set_status_by_api(opt_api_t, "ready")
 
         account_id = api_pool.get_api_info_by_api_t(opt_api_t).get_account_id()
-        logging.info("{0} is ready".format(account_id))
+        logging.info("account {0} is ready".format(account_id))
 
     @staticmethod
     def on_req_error(opt_api_t: int, error: POINTER(STesError), req_id: int) -> None:
