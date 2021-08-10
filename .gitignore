@@ -132,4 +132,4 @@ dmypy.json
 .idea/
 resource/driver_cache
 resource/driver_log
-test.py
+*test.py
