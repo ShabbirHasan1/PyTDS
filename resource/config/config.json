@@ -1,0 +1,5 @@
+{
+  "webserver_config": {
+    "base_url": "http://10.0.40.252:8000"
+  }
+}
