@@ -131,3 +131,4 @@ dmypy.json
 # customized
 .idea/
 resource/driver_cache
+test.py
