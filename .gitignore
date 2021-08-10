@@ -130,4 +130,4 @@ dmypy.json
 
 # customized
 .idea/
-resource/cache
+resource/driver_cache
