@@ -254,6 +254,7 @@ class OptionTrade(object):
         return res
 
     """回调函数"""
+
     @staticmethod
     def on_connected(opt_api_t: int) -> None:
         api_pool = get_api_pool()
@@ -342,17 +343,33 @@ class OptionTrade(object):
     @staticmethod
     def on_rsp_query_order(opt_api_t: int, opt_order: POINTER(STesOptOrder), error: POINTER(STesError), req_id: int,
                            is_last: bool) -> None:
-        get_trade_process().save_order(opt_order)
+        err = error.contents
+        if err.errid != 0:
+            account_id = get_api_pool().get_api_info_by_api_t(opt_api_t).get_account_id()
+            logging.warning("error on rsp query order for account{1}, error msg: {0}".format(get_data(err), account_id))
+            return
+        get_trade_process().save_order(opt_order.contents)
 
     @staticmethod
     def on_rsp_query_trade(opt_api_t: int, opt_trade: POINTER(STesOptTrade), error: POINTER(STesError), req_id: int,
                            is_last: bool) -> None:
-        get_trade_process().save_trade(opt_trade)
+        err = error.contents
+        if err.errid != 0:
+            account_id = get_api_pool().get_api_info_by_api_t(opt_api_t).get_account_id()
+            logging.warning("error on rsp query trade for account{1}, error msg: {0}".format(get_data(err), account_id))
+            return
+        get_trade_process().save_trade(opt_trade.contents)
 
     @staticmethod
     def on_rsp_query_position(opt_api_t: int, opt_position: POINTER(STesOptPosition), error: POINTER(STesError),
                               req_id: int, is_last: bool) -> None:
-        get_trade_process().save_position(opt_position)
+        err = error.contents
+        if err.errid != 0:
+            account_id = get_api_pool().get_api_info_by_api_t(opt_api_t).get_account_id()
+            logging.warning(
+                "error on rsp query position for account{1}, error msg: {0}".format(get_data(err), account_id))
+            return
+        get_trade_process().save_position(opt_position.contents)
 
     @staticmethod
     def on_rsp_query_quote(opt_api_t: int, opt_quote: POINTER(STesOptQuoteData), error: POINTER(STesError), req_id: int,
@@ -365,15 +382,15 @@ class OptionTrade(object):
 
     @staticmethod
     def on_rtn_order(opt_api_t: int, opt_order: POINTER(STesOptOrder)) -> None:
-        get_trade_process().save_order(opt_order)
+        get_trade_process().save_order(opt_order.contents)
 
     @staticmethod
     def on_rtn_trade(opt_api_t: int, opt_trade: POINTER(STesOptTrade)) -> None:
-        get_trade_process().save_trade(opt_trade)
+        get_trade_process().save_trade(opt_trade.contents)
 
     @staticmethod
     def on_position_change(opt_api_t: int, opt_position: POINTER(STesOptPosition)) -> None:
-        get_trade_process().save_position(opt_position)
+        get_trade_process().save_position(opt_position.contents)
 
     @staticmethod
     def on_contract_status_change(opt_api_t: int,
@@ -425,10 +442,10 @@ class OptionTrade(object):
 
 _option_trade = None
 
+
 def get_option_trade() -> OptionTrade:
     global _option_trade
     if not _option_trade:
         app_config = get_app_config()
         _option_trade = OptionTrade(app_config.opt_wrapper_path)
     return _option_trade
-

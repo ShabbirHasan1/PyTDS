@@ -16,14 +16,14 @@ class OptOrderData(object):
         self.order_data = {}
         self.lock = threading.Lock()
 
-    def update_order(self, order: STesOptOrder) -> None:
+    def update_order(self, order: STesOptOrder) -> str:
         account = order.account.decode()
         symbol = order.symbol.decode()
         underlyingCode = order.underlyingCode.decode()
         orderRef = order.orderRef.decode()
         direction = order.direction.decode()
         offset = order.offset.decode()
-        hedgeFlag = order.hedgeFlag.decode()
+        hedgeFlag = order.hedgeFlag
         price = order.price
         volume = order.volume
         createDate = order.createDate
@@ -38,7 +38,7 @@ class OptOrderData(object):
         if orderStatus in _final_status:
             logging.warning("order time sequence warning, orderRef: {0}".format(orderRef))
             self.lock.release()
-            return
+            return ""
         self.order_data[orderRef] = {
             "account": account,
             "symbol": symbol,
@@ -57,7 +57,7 @@ class OptOrderData(object):
             "trackCode": trackCode
         }
         self.lock.release()
-        logging.info(self.order_data)
+        return orderRef
 
 
 class OptTradeData(object):
@@ -71,7 +71,7 @@ class OptTradeData(object):
         underlyingCode = trade.underlyingCode.decode()
         direction = trade.direction.decode()
         offset = trade.offset.decode()
-        hedgeFlag = trade.hedgeFlag.decode()
+        hedgeFlag = trade.hedgeFlag
         tradePrice = trade.tradePrice
         tradeVolume = trade.tradeVolume
         tradeDate = trade.tradeDate

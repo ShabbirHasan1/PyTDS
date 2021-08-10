@@ -48,7 +48,7 @@ def get_data(ob: Structure) -> dict:
                 try:
                     result[attr] = value.decode()
                 except Exception as e:
-                    print("utf-8解码失败，尝试gbk", str(e))
+                    # print("utf-8解码失败，尝试gbk", str(e))
                     try:
                         result[attr] = value.decode("gbk")
                     except Exception as e:
