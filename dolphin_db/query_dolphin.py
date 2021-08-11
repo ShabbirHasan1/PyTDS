@@ -1,21 +1,25 @@
 import logging
 import dolphindb as ddb
 import pandas as pd
+from config.config import get_app_config
 
 
 class DdbQuery(object):
     def __init__(self) -> None:
-        pass
+        self.app_config = get_app_config()
 
     def query_contract(self) -> tuple:
         session = ddb.session()
-        session.connect("10.0.60.59", 8503)
+        ip = self.app_config.config_dict["dolphin_config"]["contract"]["ip"]
+        port = self.app_config.config_dict["dolphin_config"]["contract"]["port"]
+        db_path = self.app_config.config_dict["dolphin_config"]["contract"]["db_path"]
+        session.connect(ip, port)
 
         opt_contract_query = f"""
-                dbPath = "/home/taoli/Quote/RtqBase/"
+                dbPath = %s
                 tc = loadTable(database(dbPath), "optCode")
                 select * from tc where Date=now().date()
-                """
+                """ % (db_path)
         opt_contract: pd.DataFrame = session.run(opt_contract_query)
         opt_row_num = opt_contract.shape[0]
         opt_contract_dict = {}
@@ -33,19 +37,22 @@ class DdbQuery(object):
                 deliveryMonth=cur_row["DeliveryMonth"],
                 expireDate=cur_row["DeliveryYear"] * 100 + cur_row["DeliveryMonth"],
                 priceTick=cur_row["PriceTick"],
+                multiple=cur_row["VolumeMultiple"]
             )
             opt_contract_dict[cur_row["InstrumentID"]] = cur_contract
 
         ftr_contract_query = f"""
-                        dbPath = "/home/taoli/Quote/RtqBase/"
+                        dbPath = %s
                         tc = loadTable(database(dbPath), "ftrCode")
                         select * from tc where Date=now().date() and ExchangeID='CFFEX'
-                        """
+                        """ % (db_path)
         ftr_contract: pd.DataFrame = session.run(ftr_contract_query)
         ftr_row_num = ftr_contract.shape[0]
         ftr_contract_dict = {}
         for row in range(ftr_row_num):
             cur_row = ftr_contract.loc[row]
+            if not cur_row["InstrumentID"].startswith("IC") and not cur_row["InstrumentID"].startswith("IF"):
+                continue
             cur_contract = dict(
                 symbol=cur_row["InstrumentID"],
                 exchange=cur_row["ExchangeID"],
@@ -54,6 +61,7 @@ class DdbQuery(object):
                 deliveryMonth=cur_row["DeliveryMonth"],
                 expireDate=cur_row["DeliveryYear"] * 100 + cur_row["DeliveryMonth"],
                 priceTick=cur_row["PriceTick"],
+                multiple=cur_row["VolumeMultiple"]
             )
             ftr_contract_dict[cur_row["InstrumentID"]] = cur_contract
 
@@ -103,3 +111,6 @@ def get_ddb_query() -> DdbQuery:
     return _ddb_query
 
 
+if __name__ == '__main__':
+    opt_contract_dict, ftr_contract_dict, stk_contract_dict = DdbQuery().query_contract()
+    print(ftr_contract_dict)

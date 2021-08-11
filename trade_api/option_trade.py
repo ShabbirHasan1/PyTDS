@@ -1,15 +1,14 @@
-from trade_api.c_struct import *
 from trade_api.c_func import *
-from typing import *
 import logging
 import os
 from ctypes import *
 from data.wrapper_data import get_api_pool, ApiInfo
-from trade.trade_prcess import get_trade_process
 from config.config import get_app_config, AppConfig
-from data.trade_data import get_opt_order_data, get_opt_trade_data, get_opt_position_data
 import threading
 from queue import Queue
+import copy
+
+_final_status = {"F", "T", "C", "B", "R"}
 
 
 class OptionTrade(object):
@@ -18,7 +17,13 @@ class OptionTrade(object):
         redefine_opt_trade_wrapper_func(self.opt_wrapper)
         self.seq_num = 0
         self.api_pool = get_api_pool()
-        self.process = get_trade_process()
+
+        self.order_data_lock = threading.Lock()
+        self.order_data = {}
+        self.trade_data_lock = threading.Lock()
+        self.trade_data = []
+        self.position_data_lock = threading.Lock()
+        self.position_data = {}
 
         self.seq_num_lock = threading.Lock()
         self.query_order_queue = Queue()
@@ -183,7 +188,7 @@ class OptionTrade(object):
     def cancel_order(self, order_info: dict, chase_flag: bool = False) -> None:
         if chase_flag:
             self.to_chase_order_lock.acquire()
-            self.to_chase_order[order_info["orderRef"]] = order_info["price"]
+            self.to_chase_order[order_info["orderRef"]] = order_info
             self.to_chase_order_lock.release()
         to_cancel_order = STesOptCancelOrder(
             orderRef=order_info["orderRef"].encode()
@@ -202,15 +207,25 @@ class OptionTrade(object):
         if err.errid != 0:
             logging.error("error occurred when query order, err msg: " + str(get_data(err)))
 
-    def save_order(self, order_data: STesOptOrder) -> None:
-        self.process.save_order(order_data)
+    def save_order(self, order: STesOptOrder, opt_api_t: int) -> None:
+        order_data = get_data(order)
+        order_data["api_t"] = opt_api_t
+        order_ref = order_data["orderRef"]
+        self.order_data_lock.acquire()
+        if order_ref in self.order_data and self.order_data[order_ref]["orderStatus"] in _final_status:
+            logging.warning("order time sequence warning, orderRef: {0}".format(order_ref))
+            self.order_data_lock.release()
+            return
 
-    def save_query_order(self, order_data: STesOptOrder, is_last: bool) -> None:
-        if not is_last:
-            self.query_order_queue.put(order_data)
-        else:
-            while self.query_order_queue.qsize() > 0:
-                self.process.save_order(self.query_order_queue.get())
+        self.order_data[order_ref] = order_data
+        self.order_data_lock.release()
+        # todo: chase order
+
+    def get_order(self, order_ref: str) -> dict:
+        self.order_data_lock.acquire()
+        res = copy.deepcopy(self.order_data[order_ref])
+        self.order_data_lock.release()
+        return res
 
     def query_trade(self, api_t: int) -> None:
         err = STesError()
@@ -220,31 +235,30 @@ class OptionTrade(object):
         if err.errid != 0:
             logging.error("error occurred when query trade, err msg: " + str(get_data(err)))
 
-    def save_trade(self, trade_data: STesOptTrade) -> None:
-        self.process.save_trade(trade_data)
+    def save_trade(self, trade: STesOptTrade) -> None:
+        trade_data = get_data(trade)
+        self.trade_data_lock.acquire()
+        self.trade_data.append(trade_data)
+        self.trade_data_lock.release()
 
-    def save_query_trade(self, trade_data: STesOptTrade, is_last: bool) -> None:
-        if not is_last:
-            self.query_trade_queue.put(trade_data)
-        else:
-            while self.query_trade_queue.qsize() > 0:
-                self.process.save_trade(self.query_trade_queue.get())
-
-    def query_position(self, api_t) -> None:
+    def query_position(self, api_t: int) -> None:
         err = STesError()
         query = STesOptQueryPosition()
         seq_id = self.gen_seq_num()
         self.opt_wrapper.opt_api_query_positions(api_t, byref(query), seq_id, byref(err))
 
-    def save_position(self, position_data: STesOptPosition) -> None:
-        self.process.save_position(position_data)
+    def save_position(self, position: STesOptPosition) -> None:
+        position_data = get_data(position)
+        key = position_data["account"], position_data["symbol"], position_data["posType"], position_data["hedgeFlag"]
+        self.position_data_lock.acquire()
+        self.position_data[key] = position_data
+        self.position_data_lock.release()
 
-    def save_query_position(self, position_data: STesOptPosition, is_last: bool) -> None:
-        if not is_last:
-            self.query_position_queue.put(position_data)
-        else:
-            while self.query_position_queue.qsize() > 0:
-                self.process.save_position(self.query_position_queue.get())
+    def get_position(self, key: tuple) -> dict:
+        self.position_data_lock.acquire()
+        res = copy.deepcopy(self.position_data[key])
+        self.position_data_lock.release()
+        return res
 
     def gen_seq_num(self) -> int:
         self.seq_num_lock.acquire()
@@ -348,7 +362,7 @@ class OptionTrade(object):
             account_id = get_api_pool().get_api_info_by_api_t(opt_api_t).get_account_id()
             logging.warning("error on rsp query order for account{1}, error msg: {0}".format(get_data(err), account_id))
             return
-        get_trade_process().save_order(opt_order.contents)
+        get_option_trade().save_order(opt_order.contents, opt_api_t)
 
     @staticmethod
     def on_rsp_query_trade(opt_api_t: int, opt_trade: POINTER(STesOptTrade), error: POINTER(STesError), req_id: int,
@@ -358,7 +372,7 @@ class OptionTrade(object):
             account_id = get_api_pool().get_api_info_by_api_t(opt_api_t).get_account_id()
             logging.warning("error on rsp query trade for account{1}, error msg: {0}".format(get_data(err), account_id))
             return
-        get_trade_process().save_trade(opt_trade.contents)
+        get_option_trade().save_trade(opt_trade.contents)
 
     @staticmethod
     def on_rsp_query_position(opt_api_t: int, opt_position: POINTER(STesOptPosition), error: POINTER(STesError),
@@ -369,7 +383,7 @@ class OptionTrade(object):
             logging.warning(
                 "error on rsp query position for account{1}, error msg: {0}".format(get_data(err), account_id))
             return
-        get_trade_process().save_position(opt_position.contents)
+        get_option_trade().save_position(opt_position.contents)
 
     @staticmethod
     def on_rsp_query_quote(opt_api_t: int, opt_quote: POINTER(STesOptQuoteData), error: POINTER(STesError), req_id: int,
@@ -382,15 +396,15 @@ class OptionTrade(object):
 
     @staticmethod
     def on_rtn_order(opt_api_t: int, opt_order: POINTER(STesOptOrder)) -> None:
-        get_trade_process().save_order(opt_order.contents)
+        get_option_trade().save_order(opt_order.contents, opt_api_t)
 
     @staticmethod
     def on_rtn_trade(opt_api_t: int, opt_trade: POINTER(STesOptTrade)) -> None:
-        get_trade_process().save_trade(opt_trade.contents)
+        get_option_trade().save_trade(opt_trade.contents)
 
     @staticmethod
     def on_position_change(opt_api_t: int, opt_position: POINTER(STesOptPosition)) -> None:
-        get_trade_process().save_position(opt_position.contents)
+        get_option_trade().save_position(opt_position.contents)
 
     @staticmethod
     def on_contract_status_change(opt_api_t: int,

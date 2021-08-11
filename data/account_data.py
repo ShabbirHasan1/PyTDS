@@ -3,11 +3,13 @@ import uuid
 import json
 from config.config import get_app_config
 import logging
+import threading
 
 
 class Account(object):
     def __init__(self, username: str = None, password: str = None, client: str = None) -> None:
         self.accounts = {}
+        self.lock = threading.Lock()
         self.app_config = get_app_config()
         self.base_url = self.app_config.config_dict["webserver_config"]["base_url"]
         self.session = requests.session()

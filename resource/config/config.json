@@ -1,5 +1,17 @@
 {
   "webserver_config": {
     "base_url": "http://10.0.40.252:8000"
+  },
+  "dolphin_config": {
+    "contract": {
+      "ip": "10.0.60.59",
+      "port": 8503,
+      "db_path": "\"/home/taoli/Quote/RtqBase/\""
+    },
+    "index_stream": {
+      "ip": "10.0.60.59",
+      "port": 8506,
+      "table_name": "index_stream"
+    }
   }
 }
