@@ -11,11 +11,28 @@ from data.quote_data import get_contract
 
 class DeltaHedge(object):
     def __init__(self) -> None:
-        self.opt_contracts, self.ftr_contracts, self.stk_contracts = get_contract()
+        self.contract = get_contract()
+        self.opt_contracts = self.contract.opt_contract
+        self.ftr_contracts = self.contract.ftr_contract
+        self.stk_contracts = self.contract.stk_contract
+
         self.api_pool = get_api_pool()
         self.accounts = get_account()
         self.app_config = get_app_config()
         self.option_trade = get_option_trade()
 
     def on_stream_received(self, row: list):
+        pass
 
+
+
+_delta_hedge = None
+
+def get_delta_hedge() -> DeltaHedge:
+    global _delta_hedge
+    if not _delta_hedge:
+        _delta_hedge = DeltaHedge()
+    return _delta_hedge
+
+if __name__ == '__main__':
+    get_delta_hedge()

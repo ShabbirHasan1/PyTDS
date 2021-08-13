@@ -1,3 +1,4 @@
 dolphindb
 zmq
 peewee
+numba

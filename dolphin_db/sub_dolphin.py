@@ -3,6 +3,7 @@ import threading
 from config.config import get_app_config
 import dolphindb as ddb
 import socket
+from strategy.delta_hedge import get_delta_hedge
 
 
 def check_port_in_use(port: int, host: str = '127.0.0.1') -> bool:
@@ -56,6 +57,7 @@ class DdbSub(object):
         )
 
     def index_stream_handler(self, row: list) -> None:
+        get_delta_hedge()
         print(row)
 
 
