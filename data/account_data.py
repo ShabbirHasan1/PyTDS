@@ -74,6 +74,7 @@ class Account(object):
             modified_data["account_id"]: str = str(account["id"])
             modified_data["counter_type"]: str = account["Counter"]["CounterType"]["Name"]
             modified_data["counter_version"]: str = account["Counter"]["CounterType"]["Version"]
+            modified_data["trade_type"]: str = account["Counter"]["CounterType"]["Type"]
             modified_data["counter_detail"]: list = account["Counter"]["CounterDetail"]
             modified_data["account_detail"]: list = account["AccountDetail"]
             modified_data["conn_tes"]: bool = account["ConnectTES"]
@@ -103,3 +104,5 @@ def get_account(username: str = None, password: str = None, client: str = None) 
         _account = Account(username, password, client)
     return _account
 
+if __name__ == '__main__':
+    get_account("admin", "666666", "ots")

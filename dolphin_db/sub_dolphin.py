@@ -4,6 +4,7 @@ from config.config import get_app_config
 import dolphindb as ddb
 import socket
 from strategy.delta_hedge import get_delta_hedge
+from data.quote_data import get_wing_model_vol_stream_data, get_contract
 
 
 def check_port_in_use(port: int, host: str = '127.0.0.1') -> bool:
@@ -34,6 +35,34 @@ class DdbSub(object):
             self.port += 1
         self.session.enableStreaming(self.port)
 
+    def subscribe_wing_model(self) -> None:
+        for wing_config in self.app_config["dolphin_config"]["wing_model_vol_stream"]:
+            self.session.subscribe(
+                host=self.app_config["dolphin_config"]["wing_model_vol_stream"][wing_config]["ip"],
+                port=self.app_config["dolphin_config"]["wing_model_vol_stream"][wing_config]["port"],
+                tableName=self.app_config["dolphin_config"]["wing_model_vol_stream"][wing_config]["table_name"],
+                actionName="",
+                handler=self.wing_model_handler,
+                offset=-1,
+                resub=False,
+                filter=None
+            )
+            logging.info(
+                "subscribe {0} successfully".format(
+                    self.app_config["dolphin_config"]["wing_model_vol_stream"][wing_config]["table_name"]))
+
+    def unsubscribe_wing_model(self) -> None:
+        for wing_config in self.app_config["dolphin_config"]["wing_model_vol_stream"]:
+            self.session.unsubscribe(
+                host=self.app_config["dolphin_config"]["wing_model_vol_stream"][wing_config]["ip"],
+                port=self.app_config["dolphin_config"]["wing_model_vol_stream"][wing_config]["port"],
+                tableName=self.app_config["dolphin_config"]["wing_model_vol_stream"][wing_config]["table_name"],
+                actionName="",
+            )
+            logging.info(
+                "unsubscribe {0} successfully".format(
+                    self.app_config["dolphin_config"]["wing_model_vol_stream"][wing_config]["table_name"]))
+
     def subscribe_index_stream(self) -> None:
         self.session.subscribe(
             host=self.app_config["dolphin_config"]["index_stream"]["ip"],
@@ -55,10 +84,15 @@ class DdbSub(object):
             tableName=self.app_config["dolphin_config"]["index_stream"]["table_name"],
             actionName="",
         )
+        logging.info(
+            "unsubscribe {0} successfully".format(self.app_config["dolphin_config"]["index_stream"]["table_name"]))
 
     def index_stream_handler(self, row: list) -> None:
-        get_delta_hedge()
-        print(row)
+        pass
+
+    def wing_model_handler(self, row: list) -> None:
+        wing = get_wing_model_vol_stream_data()
+        wing.update_quote(row)
 
 
 _ddb_sub = None
@@ -73,5 +107,5 @@ def get_ddb_sub() -> DdbSub:
 
 if __name__ == '__main__':
     s = get_ddb_sub()
-    s.subscribe_index_stream()
+    s.subscribe_wing_model()
     threading.Event().wait()

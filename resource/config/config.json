@@ -4,14 +4,51 @@
   },
   "dolphin_config": {
     "contract": {
-      "ip": "10.0.60.59",
-      "port": 8503,
-      "db_path": "\"/home/taoli/Quote/RtqBase/\""
+      "option": {
+        "ip": "10.0.60.57",
+        "port": 8503,
+        "db_path": "\"/home/taoli/Quote/RtqBase/\"",
+        "table_name": "optCode"
+      },
+      "future": {
+        "ip": "10.0.60.59",
+        "port": 8503,
+        "db_path": "\"/home/taoli/Quote/RtqBase/\"",
+        "table_name": "ftrCode"
+      },
+      "stock": {
+        "ip": "10.0.60.57",
+        "port": 8503,
+        "db_path": "\"/home/taoli/Quote/RtqBase/\"",
+        "table_name": "stkCode"
+      }
     },
     "index_stream": {
       "ip": "10.0.60.59",
       "port": 8506,
       "table_name": "index_stream"
+    },
+    "wing_model_vol_stream": {
+      "wing_model_vol_stream_510050": {
+        "ip": "10.0.60.59",
+        "port": 8505,
+        "table_name": "wing_model_vol_stream_510050"
+      },
+      "wing_model_vol_stream_510300": {
+        "ip": "10.0.60.59",
+        "port": 8505,
+        "table_name": "wing_model_vol_stream_510300"
+      },
+      "wing_model_vol_stream_159919": {
+        "ip": "10.0.60.59",
+        "port": 8505,
+        "table_name": "wing_model_vol_stream_159919"
+      },
+      "wing_model_vol_stream_000300": {
+        "ip": "10.0.60.59",
+        "port": 8505,
+        "table_name": "wing_model_vol_stream_000300"
+      }
     }
   }
 }

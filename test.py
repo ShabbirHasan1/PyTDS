@@ -1,7 +1,8 @@
 from queue import Queue
 from threading import Thread, Event
 import time
-
+import numpy as np
+import numba as nb
 
 class TestThread(Thread):
     def __init__(self, q: Queue, e: Event):
@@ -21,14 +22,17 @@ class TestThread(Thread):
         print("done")
 
 
+@nb.jit(nopython=True)
+def test(a, b):
+    res = []
+    for e in a:
+        res.append(e * b)
+    return res
+
+
 if __name__ == '__main__':
-    q = Queue()
-    q.put("a")
-    while q.not_empty:
-        pass
-
-
-
+    for i in range(1, 2):
+        print(i)
 
 
 

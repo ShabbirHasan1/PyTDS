@@ -10,16 +10,17 @@ class DdbQuery(object):
 
     def query_contract(self) -> tuple:
         session = ddb.session()
-        ip = self.app_config.config_dict["dolphin_config"]["contract"]["ip"]
-        port = self.app_config.config_dict["dolphin_config"]["contract"]["port"]
-        db_path = self.app_config.config_dict["dolphin_config"]["contract"]["db_path"]
+        ip = self.app_config.config_dict["dolphin_config"]["contract"]["option"]["ip"]
+        port = self.app_config.config_dict["dolphin_config"]["contract"]["option"]["port"]
+        db_path = self.app_config.config_dict["dolphin_config"]["contract"]["option"]["db_path"]
+        table_name = self.app_config.config_dict["dolphin_config"]["contract"]["option"]["table_name"]
         session.connect(ip, port)
 
         opt_contract_query = f"""
                 dbPath = %s
-                tc = loadTable(database(dbPath), "optCode")
+                tc = loadTable(database(dbPath), "%s")
                 select * from tc where Date=now().date()
-                """ % (db_path)
+                """ % (db_path, table_name)
         opt_contract: pd.DataFrame = session.run(opt_contract_query)
         opt_row_num = opt_contract.shape[0]
         opt_contract_dict = {}
@@ -41,21 +42,31 @@ class DdbQuery(object):
             )
             opt_contract_dict[cur_row["InstrumentID"]] = cur_contract
 
+        session.close()
+
+        ip = self.app_config.config_dict["dolphin_config"]["contract"]["future"]["ip"]
+        port = self.app_config.config_dict["dolphin_config"]["contract"]["future"]["port"]
+        db_path = self.app_config.config_dict["dolphin_config"]["contract"]["future"]["db_path"]
+        table_name = self.app_config.config_dict["dolphin_config"]["contract"]["future"]["table_name"]
+        session.connect(ip, port)
+
         ftr_contract_query = f"""
                         dbPath = %s
-                        tc = loadTable(database(dbPath), "ftrCode")
+                        tc = loadTable(database(dbPath), "%s")
                         select * from tc where Date=now().date() and ExchangeID='CFFEX'
-                        """ % (db_path)
+                        """ % (db_path, table_name)
         ftr_contract: pd.DataFrame = session.run(ftr_contract_query)
         ftr_row_num = ftr_contract.shape[0]
         ftr_contract_dict = {}
         for row in range(ftr_row_num):
             cur_row = ftr_contract.loc[row]
-            if not cur_row["InstrumentID"].startswith("IC") and not cur_row["InstrumentID"].startswith("IF"):
+            if not cur_row["InstrumentID"].startswith("IC") and not cur_row["InstrumentID"].startswith("IF") and not \
+            cur_row["InstrumentID"].startswith("IH"):
                 continue
             cur_contract = dict(
                 symbol=cur_row["InstrumentID"],
                 exchange=cur_row["ExchangeID"],
+                ProductID=cur_row["ProductID"],
                 name=cur_row["InstrumentName"],
                 deliveryYear=cur_row["DeliveryYear"],
                 deliveryMonth=cur_row["DeliveryMonth"],
@@ -64,6 +75,8 @@ class DdbQuery(object):
                 multiple=cur_row["VolumeMultiple"]
             )
             ftr_contract_dict[cur_row["InstrumentID"]] = cur_contract
+
+        session.close()
 
         stk_contract_dict = {
             "510050": {
@@ -86,7 +99,6 @@ class DdbQuery(object):
             }
         }
 
-        session.close()
         del session
 
         if not opt_contract_dict:
