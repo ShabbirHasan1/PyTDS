@@ -101,6 +101,10 @@ _account = None
 def get_account(username: str = None, password: str = None, client: str = None) -> Account:
     global _account
     if not _account:
+        if username is None and password is None and client is None:
+            username = "admin"
+            password = "666666"
+            client = "ots"
         _account = Account(username, password, client)
     return _account
 

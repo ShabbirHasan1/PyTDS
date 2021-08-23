@@ -1,6 +1,6 @@
 {
   "webserver_config": {
-    "base_url": "http://10.0.40.252:8000"
+    "base_url": "http://10.0.60.58:8000"
   },
   "dolphin_config": {
     "contract": {
@@ -21,6 +21,28 @@
         "port": 8503,
         "db_path": "\"/home/taoli/Quote/RtqBase/\"",
         "table_name": "stkCode"
+      }
+    },
+    "option_quote": {
+      "option_stream_510050": {
+        "ip": "10.0.60.59",
+        "port": 8503,
+        "table_name": "rtq_option_stream_510050"
+      },
+      "option_stream_510300": {
+        "ip": "10.0.60.59",
+        "port": 8503,
+        "table_name": "rtq_option_stream_510300"
+      },
+      "option_stream_159919": {
+        "ip": "10.0.60.59",
+        "port": 8503,
+        "table_name": "rtq_option_stream_159919"
+      },
+      "option_stream_000300": {
+        "ip": "10.0.60.59",
+        "port": 8503,
+        "table_name": "rtq_option_stream_000300"
       }
     },
     "index_stream": {

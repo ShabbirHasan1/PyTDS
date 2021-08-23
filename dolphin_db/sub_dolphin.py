@@ -4,7 +4,7 @@ from config.config import get_app_config
 import dolphindb as ddb
 import socket
 from strategy.delta_hedge import get_delta_hedge
-from data.quote_data import get_wing_model_vol_stream_data, get_contract
+from data.quote_data import get_wing_model_vol_stream_data, get_contract, get_opt_quote_data
 
 
 def check_port_in_use(port: int, host: str = '127.0.0.1') -> bool:
@@ -27,6 +27,8 @@ class DdbSub(object):
         self.session = None
         self.port = 12345
         self.init_session()
+        self.option_quote = get_opt_quote_data()
+        self.wing_data = get_wing_model_vol_stream_data()
 
     def init_session(self) -> None:
         if not self.session:
@@ -34,6 +36,31 @@ class DdbSub(object):
         while check_port_in_use(self.port):
             self.port += 1
         self.session.enableStreaming(self.port)
+
+    def subscribe_option_quote(self) -> None:
+        for option_quote_config in self.app_config["dolphin_config"]["option_quote"].values():
+            self.session.subscribe(
+                host=option_quote_config["ip"],
+                port=option_quote_config["port"],
+                tableName=option_quote_config["table_name"],
+                actionName="",
+                handler=self.option_quote_handler,
+                offset=-1,
+                resub=False,
+                filter=None
+            )
+            logging.info("subscribe {0} successfully".format(option_quote_config["table_name"]))
+
+    def unsubscribe_option_quote(self) -> None:
+        for option_quote_config in self.app_config["dolphin_config"]["option_quote"].values():
+            self.session.unsubscribe(
+                host=option_quote_config["ip"],
+                port=option_quote_config["port"],
+                tableName=option_quote_config["table_name"],
+                actionName="",
+            )
+            logging.info("unsubscribe {0} successfully".format(option_quote_config["table_name"]))
+
 
     def subscribe_wing_model(self) -> None:
         for wing_config in self.app_config["dolphin_config"]["wing_model_vol_stream"]:
@@ -87,12 +114,14 @@ class DdbSub(object):
         logging.info(
             "unsubscribe {0} successfully".format(self.app_config["dolphin_config"]["index_stream"]["table_name"]))
 
+    def option_quote_handler(self, row: list) -> None:
+        self.option_quote.update_quote(row)
+
     def index_stream_handler(self, row: list) -> None:
         pass
 
     def wing_model_handler(self, row: list) -> None:
-        wing = get_wing_model_vol_stream_data()
-        wing.update_quote(row)
+        self.wing_data.update_quote(row)
 
 
 _ddb_sub = None

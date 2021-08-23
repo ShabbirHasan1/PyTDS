@@ -1,9 +1,12 @@
 import logging
 
+import delta as delta
+
 from data.trade_data import OptPositionData
 from dolphin_db.query_dolphin import get_ddb_query
 import threading
 import copy
+import time
 
 _wing_index = {
     "user": 0,
@@ -130,6 +133,10 @@ class OptQuoteData(object):
         self.quote = {}
         self.lock = threading.Lock()
 
+    @staticmethod
+    def get_opt_quote_index() -> dict:
+        return _opt_quote_index
+
     def update_quote(self, row: list) -> None:
         self.lock.acquire()
         self.quote[row[self.symbol_index]] = row
@@ -141,15 +148,23 @@ class OptQuoteData(object):
         self.lock.release()
         return res
 
+    def get_quote_with_symbol(self, symbol: str) -> list:
+        self.lock.acquire()
+        res = copy.deepcopy(self.quote[symbol])
+        self.lock.release()
+        return res
+
 class WingModelVolStreamData(object):
     def __init__(self) -> None:
         self.underlying_index = _wing_index["underlier"]
         self.update_time_index = _wing_index["update_time"]
         self.symbol_index = _wing_index["symbol"]
+        self.delta_index = _wing_index["delta"]
+        self.future_price_index = _wing_index["future_price"]
         self.quote = {}
         self.lock = threading.Lock()
 
-    def update_quote(self, row: list) -> None:
+    def update_quote_bak(self, row: list) -> None:
         cur_underlying = row[self.underlying_index]
         cur_symbol = row[self.symbol_index]
         self.lock.acquire()
@@ -158,17 +173,60 @@ class WingModelVolStreamData(object):
         self.quote[cur_underlying][cur_symbol] = row
         self.lock.release()
 
+    def get_quote_by_underlying_bak(self, underlying: str) -> dict:
+        self.lock.acquire()
+        res = copy.deepcopy(self.quote[underlying])
+        self.lock.release()
+        return res
+
+    def get_quote_by_symbol_bak(self, underlying: str, symbol: str) -> dict:
+        self.lock.acquire()
+        res = copy.deepcopy(self.quote[underlying][symbol])
+        self.lock.release()
+        return res
+
+    def get_quote_bak(self) -> dict:
+        self.lock.acquire()
+        res = copy.deepcopy(self.quote)
+        self.lock.release()
+        return res
+
+    def get_delta_by_symbol_bak(self, underlying: str, symbol: str) -> float:
+        self.lock.acquire()
+        res = self.quote[underlying][symbol][self.delta_index]
+        self.lock.release()
+        return res
+    # ------------------------------------------------------------------------------------------------------------------------
+    def update_quote(self, row: list) -> None:
+        self.lock.acquire()
+        if row[self.symbol_index] not in self.quote:
+            self.quote[row[self.symbol_index]] = {}
+        self.quote[row[self.symbol_index]] = row
+        self.lock.release()
+
     def get_quote(self) -> dict:
         self.lock.acquire()
         res = copy.deepcopy(self.quote)
         self.lock.release()
         return res
 
-    def get_quote_by_underlying(self, underlying: str) -> dict:
+    def get_delta_by_symbol(self, symbol: str) -> float:
         self.lock.acquire()
-        res = copy.deepcopy(self.quote[underlying])
+        res = self.quote[symbol][self.delta_index]
         self.lock.release()
         return res
+
+    def get_future_price_by_symbol(self, symbol: str) -> float:
+        self.lock.acquire()
+        res = self.quote[symbol][self.future_price_index]
+        self.lock.release()
+        return res
+
+
+
+
+
+
 
 
 class IndexStreamData(object):

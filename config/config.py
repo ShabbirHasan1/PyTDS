@@ -15,6 +15,7 @@ def get_parent_path(path: str) -> str:
 def transfer_path(path: str) -> str:
     return Path(path).as_posix()
 
+
 class AppConfig(object):
     def __init__(self) -> None:
         cur_path = transfer_path(get_cur_path())
@@ -45,7 +46,9 @@ class AppConfig(object):
             logging.error("load config file failed")
         return config_dict
 
+
 _app_config = None
+
 
 def get_app_config() -> AppConfig:
     global _app_config

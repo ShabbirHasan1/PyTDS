@@ -112,6 +112,41 @@ class DdbQuery(object):
 
         return opt_contract_dict, ftr_contract_dict, stk_contract_dict
 
+    def query_option_quote(self) -> list:
+        res = []
+        session = ddb.session()
+        for config in self.app_config.config_dict["dolphin_config"]["option_quote"].values():
+            ip = config["ip"]
+            port = config["port"]
+            table_name = config["table_name"]
+            session.connect(ip, port)
+            recent_opt_quote_data: pd.DataFrame = session.run("select top 1 * from {0} context by symbol csort time desc".format(table_name))
+            row_num = recent_opt_quote_data.shape[0]
+            for row in range(row_num):
+                row_data = recent_opt_quote_data.loc[row]
+                res.append(row_data.tolist())
+            session.close()
+        del session
+        return res
+
+
+    def query_wing_data(self) -> list:
+        res = []
+        session = ddb.session()
+        for config in self.app_config.config_dict["dolphin_config"]["wing_model_vol_stream"].values():
+            ip = config["ip"]
+            port = config["port"]
+            table_name = config["table_name"]
+            session.connect(ip, port)
+            recent_wing_data: pd.DataFrame = session.run("select top 1 * from {0} context by symbol csort time desc".format(table_name))
+            row_num = recent_wing_data.shape[0]
+            for row in range(row_num):
+                row_data = recent_wing_data.loc[row]
+                res.append(row_data.tolist())
+            session.close()
+        del session
+        return res
+
 
 _ddb_query = None
 
@@ -124,5 +159,12 @@ def get_ddb_query() -> DdbQuery:
 
 
 if __name__ == '__main__':
-    opt_contract_dict, ftr_contract_dict, stk_contract_dict = DdbQuery().query_contract()
-    print(ftr_contract_dict)
+    # opt_contract_dict, ftr_contract_dict, stk_contract_dict = DdbQuery().query_contract()
+    # print(len(opt_contract_dict))
+    # # print(ftr_contract_dict)
+    import time
+    t = time.time()
+    d = get_ddb_query().query_wing_data()
+    print(time.time() - t)
+
+

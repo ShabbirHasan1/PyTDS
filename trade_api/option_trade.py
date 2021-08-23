@@ -24,6 +24,8 @@ class OptionTrade(object):
         self.trade_data = []
         self.position_data_lock = threading.Lock()
         self.position_data = {}
+        self.group_position_data = {}
+        self.position_for_delta = {}
 
         self.seq_num_lock = threading.Lock()
         self.query_order_queue = Queue()
@@ -251,12 +253,42 @@ class OptionTrade(object):
         position_data = get_data(position)
         key = position_data["account"], position_data["symbol"], position_data["posType"], position_data["hedgeFlag"]
         self.position_data_lock.acquire()
+
+        # save default position
         self.position_data[key] = position_data
+
+        # save grouped position
+        if position_data["account"] not in self.group_position_data:
+            self.group_position_data[position_data["account"]] = {}
+        if position_data["symbol"] not in self.group_position_data[position_data["account"]]:
+            self.group_position_data[position_data["account"]][position_data["symbol"]] = {}
+        if position_data["hedgeFlag"] not in self.group_position_data[position_data["account"]][position_data["symbol"]]:
+            self.group_position_data[position_data["account"]][position_data["symbol"]][position_data["hedgeFlag"]] = {}
+        self.group_position_data[position_data["account"]][position_data["symbol"]][position_data["hedgeFlag"]][
+            position_data["posType"]] = position_data
+
+        # save position for delta
+        underlying = position_data["underlyingCode"][:6]
+        if position_data["account"] not in self.position_for_delta:
+            self.position_for_delta[position_data["account"]] = {}
+        if underlying not in self.position_for_delta[position_data["account"]]:
+            self.position_for_delta[position_data["account"]][underlying] = {}
+        if position_data["symbol"] not in self.position_for_delta[position_data["account"]][underlying]:
+            self.position_for_delta[position_data["account"]][underlying][position_data["symbol"]] = {}
+        self.position_for_delta[position_data["account"]][underlying][position_data["symbol"]][position_data["posType"]] = position_data
+
+
         self.position_data_lock.release()
 
     def get_position(self, key: tuple) -> dict:
         self.position_data_lock.acquire()
         res = copy.deepcopy(self.position_data[key])
+        self.position_data_lock.release()
+        return res
+
+    def get_position_for_delta(self) -> dict:
+        self.position_data_lock.acquire()
+        res = copy.deepcopy(self.position_for_delta)
         self.position_data_lock.release()
         return res
 
@@ -360,7 +392,7 @@ class OptionTrade(object):
         err = error.contents
         if err.errid != 0:
             account_id = get_api_pool().get_api_info_by_api_t(opt_api_t).get_account_id()
-            logging.warning("error on rsp query order for account{1}, error msg: {0}".format(get_data(err), account_id))
+            logging.warning("error on rsp query order for account {1}, error msg: {0}".format(get_data(err), account_id))
             return
         get_option_trade().save_order(opt_order.contents, opt_api_t)
 
@@ -370,7 +402,7 @@ class OptionTrade(object):
         err = error.contents
         if err.errid != 0:
             account_id = get_api_pool().get_api_info_by_api_t(opt_api_t).get_account_id()
-            logging.warning("error on rsp query trade for account{1}, error msg: {0}".format(get_data(err), account_id))
+            logging.warning("error on rsp query trade for account {1}, error msg: {0}".format(get_data(err), account_id))
             return
         get_option_trade().save_trade(opt_trade.contents)
 
@@ -381,7 +413,7 @@ class OptionTrade(object):
         if err.errid != 0:
             account_id = get_api_pool().get_api_info_by_api_t(opt_api_t).get_account_id()
             logging.warning(
-                "error on rsp query position for account{1}, error msg: {0}".format(get_data(err), account_id))
+                "error on rsp query position for account {1}, error msg: {0}".format(get_data(err), account_id))
             return
         get_option_trade().save_position(opt_position.contents)
 
