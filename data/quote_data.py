@@ -86,6 +86,126 @@ _opt_quote_index = {
     "lowerLimit": 46
 }
 
+_ftr_quote_index = {
+    "symbol": 0,
+    "product": 1,
+    "market": 2,
+    "tradingDay": 3,
+    "date": 4,
+    "time": 5,
+    "preClose": 6,
+    "open": 7,
+    "high": 8,
+    "low": 9,
+    "close": 10,
+    "last": 11,
+    "limitDown": 12,
+    "limitUp": 13,
+    "curVol": 14,
+    "volume": 15,
+    "curTurnover": 16,
+    "turnover": 17,
+    "oi": 18,
+    "settle": 19,
+    "preOI": 20,
+    "prSettle": 21,
+    "curDelta": 22,
+    "preDelta": 23,
+    "askPrice1": 24,
+    "askPrice2": 25,
+    "askPrice3": 26,
+    "askPrice4": 27,
+    "askPrice5": 28,
+    "bidPrice1": 29,
+    "bidPrice2": 30,
+    "bidPrice3": 31,
+    "bidPrice4": 32,
+    "bidPrice5": 33,
+    "askVolume1": 34,
+    "askVolume2": 35,
+    "askVolume3": 36,
+    "askVolume4": 37,
+    "askVolume5": 38,
+    "bidVolume1": 39,
+    "bidVolume2": 40,
+    "bidVolume3": 41,
+    "bidVolume4": 42,
+    "bidVolume5": 43,
+    "unixTime": 44
+}
+
+
+_stk_quote_index = {
+    "symbol": 0,
+    "market": 1,
+    "date": 2,
+    "time": 3,
+    "preClose": 4,
+    "open": 5,
+    "high": 6,
+    "low": 7,
+    "last": 8,
+    "numTrades": 9,
+    "curNumTrades": 10,
+    "volume": 11,
+    "curVol": 12,
+    "turnover": 13,
+    "curTurnover": 14,
+    "peratio1": 15,
+    "peratio2": 16,
+    "totalAskVolume": 17,
+    "wavgAskPrice": 18,
+    "askLevel": 19,
+    "totalBidVolume": 20,
+    "wavgBidPrice": 21,
+    "bidLevel": 22,
+    "iopv": 23,
+    "ytm": 24,
+    "askPrice1": 25,
+    "askPrice2": 26,
+    "askPrice3": 27,
+    "askPrice4": 28,
+    "askPrice5": 29,
+    "askPrice6": 30,
+    "askPrice7": 31,
+    "askPrice8": 32,
+    "askPrice9": 33,
+    "askPrice10": 34,
+    "bidPrice1": 35,
+    "bidPrice2": 36,
+    "bidPrice3": 37,
+    "bidPrice4": 38,
+    "bidPrice5": 39,
+    "bidPrice6": 40,
+    "bidPrice7": 41,
+    "bidPrice8": 42,
+    "bidPrice9": 43,
+    "bidPrice10": 44,
+    "askVolume1": 45,
+    "askVolume2": 46,
+    "askVolume3": 47,
+    "askVolume4": 48,
+    "askVolume5": 49,
+    "askVolume6": 50,
+    "askVolume7": 51,
+    "askVolume8": 52,
+    "askVolume9": 53,
+    "askVolume10": 54,
+    "bidVolume1": 55,
+    "bidVolume2": 56,
+    "bidVolume3": 57,
+    "bidVolume4": 58,
+    "bidVolume5": 59,
+    "bidVolume6": 60,
+    "bidVolume7": 61,
+    "bidVolume8": 62,
+    "bidVolume9": 63,
+    "bidVolume10": 64,
+    "unixTime": 65,
+    "upperLimit": 66,
+    "lowerLimit": 67
+}
+
 
 class Contract(object):
     def __init__(self, auto_load_ddb=False) -> None:
@@ -154,6 +274,74 @@ class OptQuoteData(object):
         self.lock.release()
         return res
 
+class FtrQuoteData(object):
+    def __init__(self) -> None:
+        self.symbol_index = _ftr_quote_index["symbol"]
+        self.last_price_index = _ftr_quote_index["last"]
+        self.quote = {}
+        self.lock = threading.Lock()
+
+    @staticmethod
+    def get_opt_quote_index() -> dict:
+        return _ftr_quote_index
+
+    def update_quote(self, row: list) -> None:
+        self.lock.acquire()
+        self.quote[row[self.symbol_index]] = row
+        self.lock.release()
+
+    def get_quote(self) -> dict:
+        self.lock.acquire()
+        res = copy.deepcopy(self.quote)
+        self.lock.release()
+        return res
+
+    def get_quote_with_symbol(self, symbol: str) -> list:
+        self.lock.acquire()
+        res = copy.deepcopy(self.quote[symbol])
+        self.lock.release()
+        return res
+
+    def get_last_price_with_symbol(self, symbol: str) -> float:
+        self.lock.acquire()
+        res = self.quote[symbol][self.last_price_index]
+        self.lock.release()
+        return res
+
+class StkQuoteData(object):
+    def __init__(self) -> None:
+        self.symbol_index = _stk_quote_index["symbol"]
+        self.last_price_index = _stk_quote_index["last"]
+        self.quote = {}
+        self.lock = threading.Lock()
+
+    @staticmethod
+    def get_opt_quote_index() -> dict:
+        return _stk_quote_index
+
+    def update_quote(self, row: list) -> None:
+        self.lock.acquire()
+        self.quote[row[self.symbol_index]] = row
+        self.lock.release()
+
+    def get_quote(self) -> dict:
+        self.lock.acquire()
+        res = copy.deepcopy(self.quote)
+        self.lock.release()
+        return res
+
+    def get_quote_with_symbol(self, symbol: str) -> list:
+        self.lock.acquire()
+        res = copy.deepcopy(self.quote[symbol])
+        self.lock.release()
+        return res
+
+    def get_last_price_with_symbol(self, symbol: str) -> float:
+        self.lock.acquire()
+        res = self.quote[symbol][self.last_price_index]
+        self.lock.release()
+        return res
+
 class WingModelVolStreamData(object):
     def __init__(self) -> None:
         self.underlying_index = _wing_index["underlier"]
@@ -161,8 +349,10 @@ class WingModelVolStreamData(object):
         self.symbol_index = _wing_index["symbol"]
         self.delta_index = _wing_index["delta"]
         self.future_price_index = _wing_index["future_price"]
+        self.expire_date_index = _wing_index["ExpireDate"]
         self.quote = {}
         self.lock = threading.Lock()
+        self.best_future_price = {}
 
     def update_quote_bak(self, row: list) -> None:
         cur_underlying = row[self.underlying_index]
@@ -199,10 +389,25 @@ class WingModelVolStreamData(object):
     # ------------------------------------------------------------------------------------------------------------------------
     def update_quote(self, row: list) -> None:
         self.lock.acquire()
+
         if row[self.symbol_index] not in self.quote:
             self.quote[row[self.symbol_index]] = {}
         self.quote[row[self.symbol_index]] = row
+
+        if row[self.underlying_index] not in self.best_future_price:
+            self.best_future_price[row[self.underlying_index]] = {}
+        self.best_future_price[row[self.underlying_index]][row[self.expire_date_index]] = row[self.future_price_index]
+
         self.lock.release()
+
+    def get_near_best_future_price(self) -> float:
+        self.lock.acquire()
+        price_dict: dict = self.best_future_price["510300"]
+        sorted_expire_date = sorted(price_dict.keys())
+        res = price_dict[sorted_expire_date[0]]
+        self.lock.release()
+        return res
+
 
     def get_quote(self) -> dict:
         self.lock.acquire()
@@ -238,6 +443,8 @@ class IndexStreamData(object):
 _contract = None
 _wing_model_vol_stream_data = None
 _opt_quote_data = None
+_ftr_quote_data = None
+_stk_quote_data = None
 
 
 def get_contract() -> Contract:
@@ -253,6 +460,18 @@ def get_opt_quote_data() -> OptQuoteData:
         _opt_quote_data = OptQuoteData()
     return _opt_quote_data
 
+def get_ftr_quote_data() -> FtrQuoteData:
+    global _ftr_quote_data
+    if not _ftr_quote_data:
+        _ftr_quote_data = FtrQuoteData()
+    return _ftr_quote_data
+
+def get_stk_quote_data() -> StkQuoteData:
+    global _stk_quote_data
+    if not _stk_quote_data:
+        _stk_quote_data = StkQuoteData()
+    return _stk_quote_data
+
 
 def get_wing_model_vol_stream_data() -> WingModelVolStreamData:
     global _wing_model_vol_stream_data
@@ -263,14 +482,16 @@ def get_wing_model_vol_stream_data() -> WingModelVolStreamData:
 
 if __name__ == '__main__':
     contract = get_contract()
-    underlying_list = []
-    for underlying in contract.opt_group_for_synthetic:
-        expire_date_list = []
-        for expire_date in contract.opt_group_for_synthetic[underlying]:
-            strike_price_list = []
-            for strike_price in contract.opt_group_for_synthetic[underlying][expire_date]:
-                strike_price_list.append(strike_price)
-            expire_date_list.append({expire_date: strike_price_list})
-        underlying_list.append({underlying: expire_date_list})
+    print(contract.opt_contract)
 
-    print(underlying_list)
+    # underlying_list = []
+    # for underlying in contract.opt_group_for_synthetic:
+    #     expire_date_list = []
+    #     for expire_date in contract.opt_group_for_synthetic[underlying]:
+    #         strike_price_list = []
+    #         for strike_price in contract.opt_group_for_synthetic[underlying][expire_date]:
+    #             strike_price_list.append(strike_price)
+    #         expire_date_list.append({expire_date: strike_price_list})
+    #     underlying_list.append({underlying: expire_date_list})
+    #
+    # print(underlying_list)

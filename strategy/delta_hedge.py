@@ -1,15 +1,15 @@
-import numpy as np
-import numba as nb
-import pandas as pd
 import logging
+
+from trade_api import future_trade
 from trade_api.option_trade import get_option_trade
+from trade_api.future_trade import get_future_trade
+from trade_api.stock_trade import get_stock_trade
 from config.config import get_app_config
 from data.account_data import get_account
 from data.wrapper_data import get_api_pool
-from data.quote_data import get_contract, get_wing_model_vol_stream_data, get_opt_quote_data
+from data.quote_data import get_contract, get_wing_model_vol_stream_data, get_opt_quote_data, get_ftr_quote_data, \
+    get_stk_quote_data
 from dolphin_db.query_dolphin import get_ddb_query
-# from dolphin_db.sub_dolphin import get_ddb_sub
-import timeit
 from decorator import decorator
 import time
 import datetime
@@ -25,13 +25,6 @@ def timer(func, *args, **kwargs):
     print("%s time cost:" % func.__name__, datetime.datetime.now() - t)
     return res
 
-
-# _underlying_list = [
-#     "510050",
-#     "510300",
-#     "159919",
-#     "000300"
-# ]
 
 _underlying_level = {
     "510050": 5,
@@ -51,11 +44,13 @@ class DeltaHedge(object):
         self.opt_underlying_total_count = contract_ob.opt_underlying_total_count
         self.opt_synthetic_group = contract_ob.opt_group_for_synthetic
         self.wing_model_vol_stream_data = get_wing_model_vol_stream_data()
-        self.delta_target = 0
-        self.delta_threshold = 100
-        self.delta_warning = 200
+        self.delta_multiplier = 10000
+        self.delta_target = 0 * self.delta_multiplier
+        self.delta_threshold = 100 * self.delta_multiplier
+        self.delta_warning = 200 * self.delta_multiplier
         self.target_underlying_list: List[str] = []
-        self.buy_synthetic = {1: [], 2: []}
+        # 1 buy call sell put, 2 buy put sell call
+        self.buy_synthetic = {1: set(), 2: set()}
         self.selected_synthetic: Set[tuple] = set()
         self.buy_call_synthetic_quote = {}
         self.buy_put_synthetic_quote = {}
@@ -65,6 +60,8 @@ class DeltaHedge(object):
         self.future_trade_account = ""
         self.stock_trade_account = ""
         self.opt_quote_data_ob = get_opt_quote_data()
+        self.ftr_quote_data_ob = get_ftr_quote_data()
+        self.stk_quote_data_ob = get_stk_quote_data()
         self.tick_num = 0
 
         self.api_pool = get_api_pool()
@@ -72,6 +69,8 @@ class DeltaHedge(object):
         self.accounts = account_ob.get_account()
         self.app_config = get_app_config()
         self.option_trade_ob = get_option_trade()
+        self.future_trade_ob = get_future_trade()
+        self.stock_trade_ob = get_stock_trade()
         self.trade_is_ready = False
         self.quote_is_ready = False
 
@@ -115,12 +114,12 @@ class DeltaHedge(object):
                 logging.error("cannot find strike price %s for underlying %s, expire date %s" % (e[2], e[0], e[1]))
                 self.buy_synthetic.clear()
                 return False
-
-            self.selected_synthetic.add((e[0], e[1], e[2]))
+            synthetic_key = (e[0], e[1], e[2])
+            self.selected_synthetic.add(synthetic_key)
             if e[3] == 1 or e[3] == "call":
-                self.buy_synthetic[1].append(e)
+                self.buy_synthetic[1].add(synthetic_key)
             elif e[3] == 2 or e[3] == "put":
-                self.buy_synthetic[2].append(e)
+                self.buy_synthetic[2].add(synthetic_key)
             else:
                 self.buy_synthetic.clear()
                 logging.error("type error for current synthetic future %s" % e)
@@ -220,14 +219,16 @@ class DeltaHedge(object):
         return True
 
     @timer
-    def get_trade_synthetic_future_quote(self) -> dict:
+    def get_trade_synthetic_future_quote(self) -> tuple:
         # cur_quote = self.opt_quote_data_ob.get_quote()
         opt_quote_index = self.opt_quote_data_ob.get_opt_quote_index()
         # e[0] underlying e[1] expire date e[2] strike price
-        res_quote = {}
+        # synthetic_quote = {}
+        buy_call_synthetic_quote = []
+        buy_put_synthetic_quote = []
 
         for e in self.selected_synthetic:
-            key = (e[0], e[1], e[2])
+            synthetic_key = (e[0], e[1], e[2])
             call_contract = self.opt_synthetic_group[e[0]][e[1]][e[2]][1]
             put_contract = self.opt_synthetic_group[e[0]][e[1]][e[2]][2]
             # call_quote = cur_quote[call_contract["symbol"]]
@@ -253,69 +254,120 @@ class DeltaHedge(object):
 
                 synthetic_buy_volume = min(buy_call_volume, buy_put_volume)
                 synthetic_sell_volume = min(sell_call_volume, sell_put_volume)
-                synthetic_buy_price = float(Decimal(str(e[2])) + Decimal(str(call_quote[opt_quote_index[bid_price_key]])) - Decimal(
-                    str(put_quote[opt_quote_index[ask_price_key]])))
-                synthetic_sell_price = float(Decimal(str(e[2])) + Decimal(str(call_quote[opt_quote_index[ask_price_key]])) - Decimal(
-                    str(put_quote[opt_quote_index[bid_price_key]])))
+                synthetic_buy_price = float(
+                    Decimal(str(e[2])) + Decimal(str(call_quote[opt_quote_index[bid_price_key]])) - Decimal(
+                        str(put_quote[opt_quote_index[ask_price_key]])))
+                synthetic_sell_price = float(
+                    Decimal(str(e[2])) + Decimal(str(call_quote[opt_quote_index[ask_price_key]])) - Decimal(
+                        str(put_quote[opt_quote_index[bid_price_key]])))
 
-                synthetic_quote = [synthetic_buy_volume, synthetic_buy_price, synthetic_sell_volume,
-                                   synthetic_sell_price]
+                cur_synthetic_quote = [synthetic_buy_volume, synthetic_buy_price, synthetic_sell_volume,
+                                       synthetic_sell_price]
 
-                if key not in res_quote:
-                    res_quote[key] = {}
-                res_quote[key][level_key] = synthetic_quote
-        return res_quote
+                # if synthetic_key not in synthetic_quote:
+                #     synthetic_quote[synthetic_key] = {}
+                # synthetic_quote[synthetic_key][level_key] = cur_synthetic_quote
+
+                if synthetic_key in self.buy_synthetic[1]:
+                    buy_call_synthetic_quote.append([
+                        level_key,
+                        synthetic_buy_volume,
+                        synthetic_buy_price,
+                        synthetic_sell_volume,
+                        synthetic_sell_price,
+                        synthetic_key,
+                    ])
+
+                if synthetic_key in self.buy_synthetic[2]:
+                    buy_put_synthetic_quote.append([
+                        level_key,
+                        synthetic_buy_volume,
+                        synthetic_buy_price,
+                        synthetic_sell_volume,
+                        synthetic_sell_price,
+                        synthetic_key,
+                    ])
+
+        buy_call_synthetic_quote = sorted(buy_call_synthetic_quote, key=lambda e: e[2])
+        buy_put_synthetic_quote = sorted(buy_put_synthetic_quote, key=lambda e: e[4])
+
+        return buy_call_synthetic_quote, buy_put_synthetic_quote
 
     @timer()
-    def calc_total_pos_delta(self) -> tuple:
+    def calc_total_pos_delta(self) -> float:
         total_delta = 0
-        pos_data = self.option_trade_ob.get_position_for_delta()
-        for account in pos_data:
+        opt_pos_data = self.option_trade_ob.get_position_for_delta()
+        ftr_pos_data = self.future_trade_ob.get_position_for_delta()
+        stk_pos_data = self.stock_trade_ob.get_position_for_delta()
+        for account in opt_pos_data:
             if account not in self.trade_account_list:
                 continue
-            for underlying in pos_data[account]:
+            for underlying in opt_pos_data[account]:
                 if underlying not in self.target_underlying_list:
                     continue
-                # wing_quote = self.wing_model_vol_stream_data.get_quote_by_underlying(underlying)
-                for symbol in pos_data[account][underlying]:
+                for symbol in opt_pos_data[account][underlying]:
                     total_pos = 0
-                    for pos_type in pos_data[account][underlying][symbol]:
+                    for pos_type in opt_pos_data[account][underlying][symbol]:
                         if pos_type == 1:
-                            total_pos += pos_data[account][underlying][symbol][pos_type]["totalPos"]
+                            total_pos += opt_pos_data[account][underlying][symbol][pos_type]["totalPos"]
                         else:
-                            total_pos -= pos_data[account][underlying][symbol][pos_type]["totalPos"]
-                    # total_delta += total_pos * wing_quote[symbol][self.wing_model_vol_stream_data.delta_index]
-                    # total_delta += total_pos * self.wing_model_vol_stream_data.get_delta_by_symbol(underlying, symbol)
+                            total_pos -= opt_pos_data[account][underlying][symbol][pos_type]["totalPos"]
+                    if total_pos == 0:
+                        continue
+                    total_delta += total_pos * self.wing_model_vol_stream_data.get_delta_by_symbol(
+                        symbol) * self.wing_model_vol_stream_data.get_future_price_by_symbol(symbol) * \
+                                   self.opt_contracts[symbol]["multiple"]
 
-                    total_delta += total_pos * self.wing_model_vol_stream_data.get_delta_by_symbol(symbol) * self.wing_model_vol_stream_data.get_future_price_by_symbol(symbol) * self.opt_contracts[symbol]["multiple"]
-        return total_delta, pos_data
+        for account in ftr_pos_data:
+            if account not in self.trade_account_list:
+                continue
+            for underlying in ftr_pos_data[account]:
+                if underlying not in self.target_underlying_list:
+                    continue
+                for symbol in ftr_pos_data[account][underlying]:
+                    total_pos = 0
+                    for pos_type in ftr_pos_data[account][underlying][symbol]:
+                        if pos_type == 1:
+                            total_pos += ftr_pos_data[underlying][symbol][pos_type]["totalPos"]
+                        else:
+                            total_pos -= ftr_pos_data[underlying][symbol][pos_type]["totalPos"]
+                    if total_pos == 0:
+                        continue
+                    total_delta += total_pos * self.ftr_quote_data_ob.get_quote_with_symbol(symbol) * \
+                                   self.ftr_contracts[symbol]["multiple"]
 
+        for account in stk_pos_data:
+            if account not in self.trade_account_list:
+                continue
+            for symbol in stk_pos_data[account]:
+                if symbol not in self.target_underlying_list:
+                    continue
+                if stk_pos_data[account][symbol]["totalPos"] == 0:
+                    continue
+                total_delta += stk_pos_data[account][symbol]["totalPos"] * self.stk_quote_data_ob.get_quote_with_symbol(
+                    symbol)
 
+        return total_delta
 
+    @timer
     def start_delta_hedge(self):
-        total_delta, pos_data = self.calc_total_pos_delta()
+        total_delta = self.calc_total_pos_delta()
         delta_offset = total_delta - self.delta_target
         if delta_offset >= self.delta_warning:
-            logging.warning("delta reach warning")
+            logging.warning("delta reach warning, stop loop")
             return
         if delta_offset >= self.delta_threshold:
-            self.do_delta_hedge()
+            logging.info("reach delta threshold, start hedge")
+            self.do_delta_hedge(total_delta)
+        else:
+            logging.info("not reach delta threshold, do nothing")
+
+    def do_delta_hedge(self, delta_offset: float):
+        buy_call_synthetic_quote, buy_put_synthetic_quote = self.get_trade_synthetic_future_quote()
+        if delta_offset > 0:
+            pass
         else:
             pass
-
-
-
-
-
-
-    def do_delta_hedge(self):
-        pass
-
-
-
-
-
-
 
 
 _delta_hedge = None
@@ -330,8 +382,10 @@ def get_delta_hedge() -> DeltaHedge:
 
 if __name__ == '__main__':
     from dolphin_db.sub_dolphin import get_ddb_sub
+
     sub_ddb_ob = get_ddb_sub()
     sub_ddb_ob.subscribe_wing_model()
+    sub_ddb_ob.subscribe_option_quote()
     opt_quote_ob = get_opt_quote_data()
     wing_data_ob = get_wing_model_vol_stream_data()
     query_ddb_ob = get_ddb_query()
@@ -344,29 +398,45 @@ if __name__ == '__main__':
         wing_data_ob.update_quote(row)
     accounts = get_account().accounts
     option_trade_ob = get_option_trade()
+    future_trade_ob = get_future_trade()
+    stock_trade_ob = get_stock_trade()
     delta = DeltaHedge()
     delta.set_tick_num(1)
-    delta.set_buy_synthetic([("510050", 202108, 2.9, "put"), ("510050", 202108, 2.95, "call")])
-    delta.set_trade_account(["177", "178"])
-    delta.set_target_underlying_list(["159919"])
-
+    delta.set_buy_synthetic([
+        ("510050", 202109, 4.4, "put"),
+        ("510050", 202109, 4.5, "call"),
+        ("510050", 202109, 4.6, "put"),
+        ("510050", 202109, 4.7, "call"),
+        ("510050", 202109, 4.8, "put"),
+        ("510050", 202109, 4.9, "call"),
+        ("510050", 202109, 5.0, "put"),
+        ("510050", 202109, 5.25, "call"),
+    ])
+    # delta.set_trade_account(["222"])
+    # delta.set_trade_account(["177"])
+    # delta.set_trade_account(["178"])
+    delta.set_trade_account(["178", "177"])
+    # delta.set_target_underlying_list(["510050"])
+    # delta.set_target_underlying_list(["510300"])
+    # delta.set_target_underlying_list(["159919"])
+    delta.set_target_underlying_list(["000300", "510300", "159919"])
+    # delta.set_target_underlying_list(["510300", "159919", "000300"])
 
     option_trade_ob.login_account(accounts["177"])
     option_trade_ob.login_account(accounts["178"])
+    # option_trade_ob.login_account(accounts["222"])
 
-    time.sleep(20)
+    future_trade_ob.login_account(accounts["176"])
+    # stock_trade_ob.login_account(accounts[""])
+
+    time.sleep(15)
     is_ready = delta.check_trade_is_ready()
     if not is_ready:
         print("account not ready")
     else:
         print("account is ready")
 
-        synthetic_quote = delta.get_trade_synthetic_future_quote()
-        print(synthetic_quote)
+        buy_call_quote, buy_put_quote = delta.get_trade_synthetic_future_quote()
 
-        total_delta, pos_data = delta.calc_total_pos_delta()
+        total_delta = delta.calc_total_pos_delta()
         print(total_delta, round(total_delta / 10000, 1))
-
-
-
-

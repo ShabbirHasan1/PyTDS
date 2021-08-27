@@ -4,8 +4,10 @@ from config.config import get_app_config
 import dolphindb as ddb
 import socket
 from strategy.delta_hedge import get_delta_hedge
-from data.quote_data import get_wing_model_vol_stream_data, get_contract, get_opt_quote_data
+from data.quote_data import get_wing_model_vol_stream_data, get_contract, get_opt_quote_data, get_ftr_quote_data, get_stk_quote_data
 
+
+_test = set()
 
 def check_port_in_use(port: int, host: str = '127.0.0.1') -> bool:
     s = None
@@ -28,6 +30,8 @@ class DdbSub(object):
         self.port = 12345
         self.init_session()
         self.option_quote = get_opt_quote_data()
+        self.future_quote = get_ftr_quote_data()
+        self.stock_quote = get_stk_quote_data()
         self.wing_data = get_wing_model_vol_stream_data()
 
     def init_session(self) -> None:
@@ -60,6 +64,54 @@ class DdbSub(object):
                 actionName="",
             )
             logging.info("unsubscribe {0} successfully".format(option_quote_config["table_name"]))
+
+    def subscribe_future_quote(self) -> None:
+        for future_quote_config in self.app_config["dolphin_config"]["future_quote"].values():
+            self.session.subscribe(
+                host=future_quote_config["ip"],
+                port=future_quote_config["port"],
+                tableName=future_quote_config["table_name"],
+                actionName="",
+                handler=self.future_quote_handler,
+                offset=-1,
+                resub=False,
+                filter=None
+            )
+            logging.info("subscribe {0} successfully".format(future_quote_config["table_name"]))
+
+    def unsubscribe_future_quote(self) -> None:
+        for future_quote_config in self.app_config["dolphin_config"]["future_quote"].values():
+            self.session.unsubscribe(
+                host=future_quote_config["ip"],
+                port=future_quote_config["port"],
+                tableName=future_quote_config["table_name"],
+                actionName="",
+            )
+            logging.info("unsubscribe {0} successfully".format(future_quote_config["table_name"]))
+
+    def subscribe_stock_quote(self) -> None:
+        for stock_quote_config in self.app_config["dolphin_config"]["stock_quote"].values():
+            self.session.subscribe(
+                host=stock_quote_config["ip"],
+                port=stock_quote_config["port"],
+                tableName=stock_quote_config["table_name"],
+                actionName="",
+                handler=self.stock_quote_handler,
+                offset=-1,
+                resub=False,
+                filter=None
+            )
+            logging.info("subscribe {0} successfully".format(stock_quote_config["table_name"]))
+
+    def unsubscribe_stock_quote(self) -> None:
+        for stock_quote_config in self.app_config["dolphin_config"]["stock_quote"].values():
+            self.session.unsubscribe(
+                host=stock_quote_config["ip"],
+                port=stock_quote_config["port"],
+                tableName=stock_quote_config["table_name"],
+                actionName="",
+            )
+            logging.info("unsubscribe {0} successfully".format(stock_quote_config["table_name"]))
 
 
     def subscribe_wing_model(self) -> None:
@@ -117,6 +169,12 @@ class DdbSub(object):
     def option_quote_handler(self, row: list) -> None:
         self.option_quote.update_quote(row)
 
+    def future_quote_handler(self, row: list) -> None:
+        self.future_quote.update_quote(row)
+
+    def stock_quote_handler(self, row: list) -> None:
+        self.stock_quote.update_quote(row)
+
     def index_stream_handler(self, row: list) -> None:
         pass
 
@@ -125,7 +183,6 @@ class DdbSub(object):
 
 
 _ddb_sub = None
-
 
 def get_ddb_sub() -> DdbSub:
     global _ddb_sub
@@ -137,4 +194,7 @@ def get_ddb_sub() -> DdbSub:
 if __name__ == '__main__':
     s = get_ddb_sub()
     s.subscribe_wing_model()
+    import time
+    time.sleep(10)
+    get_wing_model_vol_stream_data().get_near_best_future_price()
     threading.Event().wait()

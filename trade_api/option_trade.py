@@ -180,7 +180,7 @@ class OptionTrade(object):
             volume=order_info["volume"],
             clientID=order_info["clientID"],
             orderID=order_id,
-            tradeCode=order_info["trackCode"]
+            tradeCode=order_info["trackCode"].decode()
         )
         err = STesError()
         self.opt_wrapper.opt_api_entrust(order_info["api_t"], byref(entrust), order_id, byref(err))

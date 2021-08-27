@@ -45,6 +45,20 @@
         "table_name": "rtq_option_stream_000300"
       }
     },
+    "future_quote": {
+      "future_stream": {
+        "ip": "10.0.60.59",
+        "port": 8502,
+        "table_name": "rtq_future_stream"
+      }
+    },
+    "stock_quote": {
+      "stock_stream_quick": {
+        "ip": "10.0.60.59",
+        "port": 8503,
+        "table_name": "rtq_stock_stream_quick"
+      }
+    },
     "index_stream": {
       "ip": "10.0.60.59",
       "port": 8506,

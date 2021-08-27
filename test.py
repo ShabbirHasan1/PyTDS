@@ -31,9 +31,15 @@ def test(a, b):
 
 
 if __name__ == '__main__':
-    print(test.__name__)
+    a = {
+        3:12,
+        1:2,
+        2:4
+    }
 
+    sorted_keys = sorted(a.keys())
 
+    print(a[sorted_keys[0]])
 
 
 

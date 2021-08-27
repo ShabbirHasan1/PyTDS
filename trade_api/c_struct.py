@@ -643,6 +643,23 @@ class STesOptEntrustOrder(Structure):
         ("trackCode", c_char * 129)
     ]
 
+def gen_STesOptEntrustOrder(order_info: dict) -> STesOptEntrustOrder:
+    opt_entrust_order = STesOptEntrustOrder(
+        account=order_info["account"].encode() if "account" in order_info else "",
+        symbol=order_info["symbol"].encode() if "symbol" in order_info else "",
+        exchange=order_info["exchange"].encode() if "exchange" in order_info else "",
+        orderPriceType=order_info["orderPriceType"].encode() if "orderPriceType" in order_info else "",
+        direction=order_info["direction"].encode() if "direction" in order_info else "",
+        offset=order_info["offset"].encode() if "offset" in order_info else "",
+        hedgeFlag=order_info["hedgeFlag"].encode() if "hedgeFlag" in order_info else "",
+        price=order_info["price"] if "price" in order_info else 0,
+        volume=order_info["volume"] if "volume" in order_info else 0,
+        clientID=order_info["clientID"] if "clientID" in order_info else 0,
+        orderID=order_info["orderID"] if "orderID" in order_info else 0,
+        tradeCode=order_info["tradeCode"].encode() if "tradeCode" in order_info else "",
+    )
+    return opt_entrust_order
+
 
 # 期权委托撤单，支持三种方式，任选其一
 class STesOptCancelOrder(Structure):
