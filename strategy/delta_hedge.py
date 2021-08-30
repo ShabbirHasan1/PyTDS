@@ -1,5 +1,5 @@
 import logging
-
+from decimal import Decimal
 from trade_api import future_trade
 from trade_api.option_trade import get_option_trade
 from trade_api.future_trade import get_future_trade
@@ -314,9 +314,20 @@ class DeltaHedge(object):
                             total_pos -= opt_pos_data[account][underlying][symbol][pos_type]["totalPos"]
                     if total_pos == 0:
                         continue
-                    total_delta += total_pos * self.wing_model_vol_stream_data.get_delta_by_symbol(
-                        symbol) * self.wing_model_vol_stream_data.get_future_price_by_symbol(symbol) * \
+                    # total_delta += total_pos * self.wing_model_vol_stream_data.get_delta_by_symbol(
+                    #     symbol) * self.wing_model_vol_stream_data.get_future_price_by_symbol(symbol) * \
+                    #                self.opt_contracts[symbol]["multiple"]
+
+                    # cur_delta = Decimal(str(total_pos)) * Decimal(
+                    #     str(self.wing_model_vol_stream_data.get_delta_by_symbol(symbol))) * Decimal(
+                    #     str(self.wing_model_vol_stream_data.get_future_price_by_symbol(symbol))) * Decimal(
+                    #     str(self.opt_contracts[symbol]["multiple"]))
+                    # total_delta = float(Decimal(str(total_delta)) + cur_delta)
+
+                    total_delta += total_pos * round(self.wing_model_vol_stream_data.get_delta_by_symbol(
+                        symbol) * 10000, 5) * round(self.wing_model_vol_stream_data.get_future_price_by_symbol(symbol) * 10000, 5) * \
                                    self.opt_contracts[symbol]["multiple"]
+
 
         for account in ftr_pos_data:
             if account not in self.trade_account_list:
@@ -350,21 +361,26 @@ class DeltaHedge(object):
         return total_delta
 
     @timer
+    def calc_synthetic_volume(self, delta_diff: float):
+        best_syn_f = self.wing_model_vol_stream_data.get_near_best_future_price()
+        volume = delta_diff / best_syn_f / 10000
+
+    @timer
     def start_delta_hedge(self):
         total_delta = self.calc_total_pos_delta()
-        delta_offset = total_delta - self.delta_target
-        if delta_offset >= self.delta_warning:
+        delta_diff = total_delta - self.delta_target
+        if delta_diff >= self.delta_warning:
             logging.warning("delta reach warning, stop loop")
             return
-        if delta_offset >= self.delta_threshold:
+        if delta_diff >= self.delta_threshold:
             logging.info("reach delta threshold, start hedge")
             self.do_delta_hedge(total_delta)
         else:
             logging.info("not reach delta threshold, do nothing")
 
-    def do_delta_hedge(self, delta_offset: float):
+    def do_delta_hedge(self, delta_diff: float):
         buy_call_synthetic_quote, buy_put_synthetic_quote = self.get_trade_synthetic_future_quote()
-        if delta_offset > 0:
+        if delta_diff > 0:
             pass
         else:
             pass
@@ -403,34 +419,38 @@ if __name__ == '__main__':
     delta = DeltaHedge()
     delta.set_tick_num(1)
     delta.set_buy_synthetic([
-        ("510050", 202109, 4.4, "put"),
-        ("510050", 202109, 4.5, "call"),
-        ("510050", 202109, 4.6, "put"),
-        ("510050", 202109, 4.7, "call"),
-        ("510050", 202109, 4.8, "put"),
-        ("510050", 202109, 4.9, "call"),
-        ("510050", 202109, 5.0, "put"),
-        ("510050", 202109, 5.25, "call"),
+        ("510300", 202109, 4.4, "put"),
+        ("510300", 202109, 4.5, "call"),
+        ("510300", 202109, 4.6, "put"),
+        ("510300", 202109, 4.7, "call"),
+        ("510300", 202109, 4.8, "put"),
+        ("510300", 202109, 4.9, "call"),
+        ("510300", 202109, 5.0, "put"),
+        ("510300", 202109, 5.25, "call"),
     ])
     # delta.set_trade_account(["222"])
     # delta.set_trade_account(["177"])
     # delta.set_trade_account(["178"])
-    delta.set_trade_account(["178", "177"])
+    # delta.set_trade_account(["178", "177"])
+    delta.set_trade_account(["166", "167"])
+    # delta.set_trade_account(["178", "177", "176"])
     # delta.set_target_underlying_list(["510050"])
     # delta.set_target_underlying_list(["510300"])
     # delta.set_target_underlying_list(["159919"])
-    delta.set_target_underlying_list(["000300", "510300", "159919"])
+    # delta.set_target_underlying_list(["000300"])
+    delta.set_target_underlying_list(["510300", "000300"])
     # delta.set_target_underlying_list(["510300", "159919", "000300"])
 
-    option_trade_ob.login_account(accounts["177"])
-    option_trade_ob.login_account(accounts["178"])
+    option_trade_ob.login_account(accounts["166"])
+    option_trade_ob.login_account(accounts["167"])
     # option_trade_ob.login_account(accounts["222"])
 
-    future_trade_ob.login_account(accounts["176"])
+    # future_trade_ob.login_account(accounts["176"])
     # stock_trade_ob.login_account(accounts[""])
 
-    time.sleep(15)
+    time.sleep(20)
     is_ready = delta.check_trade_is_ready()
+
     if not is_ready:
         print("account not ready")
     else:
@@ -439,4 +459,4 @@ if __name__ == '__main__':
         buy_call_quote, buy_put_quote = delta.get_trade_synthetic_future_quote()
 
         total_delta = delta.calc_total_pos_delta()
-        print(total_delta, round(total_delta / 10000, 1))
+        print(total_delta, total_delta // 10000 // 10000 // 10000)

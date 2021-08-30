@@ -195,6 +195,6 @@ if __name__ == '__main__':
     s = get_ddb_sub()
     s.subscribe_wing_model()
     import time
-    time.sleep(10)
-    get_wing_model_vol_stream_data().get_near_best_future_price()
+    time.sleep(5)
+    print(get_wing_model_vol_stream_data().get_near_best_future_price())
     threading.Event().wait()

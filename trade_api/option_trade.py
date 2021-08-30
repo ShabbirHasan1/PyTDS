@@ -251,6 +251,8 @@ class OptionTrade(object):
 
     def save_position(self, position: STesOptPosition) -> None:
         position_data = get_data(position)
+        if position_data["exchange"] == "CFFEX" and position_data["symbol"].startswith("IO"):
+            position_data["underlyingCode"] = "000300"
         key = position_data["account"], position_data["symbol"], position_data["posType"], position_data["hedgeFlag"]
         self.position_data_lock.acquire()
 
