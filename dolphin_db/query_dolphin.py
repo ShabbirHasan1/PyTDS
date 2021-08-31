@@ -145,6 +145,7 @@ class DdbQuery(object):
                 res.append(row_data.tolist())
             session.close()
         del session
+        res = sorted(res, key=lambda e: e[24], reverse=False)
         return res
 
 

@@ -64,6 +64,8 @@ class DeltaHedge(object):
         self.stk_quote_data_ob = get_stk_quote_data()
         self.tick_num = 0
 
+        self.total_delta = 0
+
         self.api_pool = get_api_pool()
         account_ob = get_account()
         self.accounts = account_ob.get_account()
@@ -314,34 +316,28 @@ class DeltaHedge(object):
                             total_pos -= opt_pos_data[account][underlying][symbol][pos_type]["totalPos"]
                     if total_pos == 0:
                         continue
-                    # total_delta += total_pos * self.wing_model_vol_stream_data.get_delta_by_symbol(
-                    #     symbol) * self.wing_model_vol_stream_data.get_future_price_by_symbol(symbol) * \
-                    #                self.opt_contracts[symbol]["multiple"]
-
-                    # cur_delta = Decimal(str(total_pos)) * Decimal(
-                    #     str(self.wing_model_vol_stream_data.get_delta_by_symbol(symbol))) * Decimal(
-                    #     str(self.wing_model_vol_stream_data.get_future_price_by_symbol(symbol))) * Decimal(
-                    #     str(self.opt_contracts[symbol]["multiple"]))
-                    # total_delta = float(Decimal(str(total_delta)) + cur_delta)
-
-                    total_delta += total_pos * round(self.wing_model_vol_stream_data.get_delta_by_symbol(
-                        symbol) * 10000, 5) * round(self.wing_model_vol_stream_data.get_future_price_by_symbol(symbol) * 10000, 5) * \
+                    total_delta += total_pos * self.wing_model_vol_stream_data.get_delta_by_symbol(
+                        symbol) * self.wing_model_vol_stream_data.get_future_price_by_symbol(symbol) * \
                                    self.opt_contracts[symbol]["multiple"]
 
-
+        product_list = []
         for account in ftr_pos_data:
             if account not in self.trade_account_list:
                 continue
-            for underlying in ftr_pos_data[account]:
-                if underlying not in self.target_underlying_list:
+            if "510050" in self.target_underlying_list:
+                product_list.append("IH")
+            if "510300" in self.target_underlying_list or "000300" in self.target_underlying_list or "159919" in self.target_underlying_list:
+                product_list.append("IF")
+            for product in ftr_pos_data[account]:
+                if product not in product_list:
                     continue
-                for symbol in ftr_pos_data[account][underlying]:
+                for symbol in ftr_pos_data[account][product]:
                     total_pos = 0
-                    for pos_type in ftr_pos_data[account][underlying][symbol]:
+                    for pos_type in ftr_pos_data[account][product][symbol]:
                         if pos_type == 1:
-                            total_pos += ftr_pos_data[underlying][symbol][pos_type]["totalPos"]
+                            total_pos += ftr_pos_data[product][symbol][pos_type]["totalPos"]
                         else:
-                            total_pos -= ftr_pos_data[underlying][symbol][pos_type]["totalPos"]
+                            total_pos -= ftr_pos_data[product][symbol][pos_type]["totalPos"]
                     if total_pos == 0:
                         continue
                     total_delta += total_pos * self.ftr_quote_data_ob.get_quote_with_symbol(symbol) * \
@@ -362,12 +358,15 @@ class DeltaHedge(object):
 
     @timer
     def calc_synthetic_volume(self, delta_diff: float):
+        # 都取上300近月最优价格
         best_syn_f = self.wing_model_vol_stream_data.get_near_best_future_price()
-        volume = delta_diff / best_syn_f / 10000
+        volume = round(delta_diff / best_syn_f / 10000)
+        return volume
 
     @timer
     def start_delta_hedge(self):
         total_delta = self.calc_total_pos_delta()
+        self.total_delta = total_delta
         delta_diff = total_delta - self.delta_target
         if delta_diff >= self.delta_warning:
             logging.warning("delta reach warning, stop loop")
@@ -378,12 +377,57 @@ class DeltaHedge(object):
         else:
             logging.info("not reach delta threshold, do nothing")
 
+    def calc_volume_delta(self, direction: str, symbol: str, volume: int) -> float:
+        cur_delta = volume * self.wing_model_vol_stream_data.get_delta_by_symbol(
+            symbol) * self.wing_model_vol_stream_data.get_future_price_by_symbol(symbol) * self.opt_contracts[symbol][
+                        "multiple"] * volume * 1 if direction == "B" else -1
+        return cur_delta
+
     def do_delta_hedge(self, delta_diff: float):
         buy_call_synthetic_quote, buy_put_synthetic_quote = self.get_trade_synthetic_future_quote()
         if delta_diff > 0:
-            pass
+            synthetic_list = buy_put_synthetic_quote
+            v_sign = -1
+            abs_delta_diff = delta_diff
         else:
-            pass
+            synthetic_list = buy_call_synthetic_quote
+            v_sign = 1
+            abs_delta_diff = - delta_diff
+
+        synthetic_index = 0
+        synthetic_list_length = len(synthetic_list)
+        order_list = []
+
+        remain_volume = self.calc_synthetic_volume(abs_delta_diff)
+        while synthetic_index < synthetic_list_length and remain_volume >= 1:
+            best_synthetic = synthetic_list[synthetic_index]
+            available_volume = min(best_synthetic[1], best_synthetic[3])
+            if available_volume < remain_volume:
+                order_volume = available_volume
+                synthetic_key = synthetic_list[synthetic_index][5]
+                synthetic_index += 1
+                remain_volume -= available_volume
+            else:
+                order_volume = remain_volume
+                synthetic_key = synthetic_list[synthetic_index][5]
+
+            call_symbol = self.opt_synthetic_group[synthetic_key[0]][synthetic_key[1]][synthetic_key[2]][1][
+                "symbol"]
+            put_symbol = self.opt_synthetic_group[synthetic_key[0]][synthetic_key[1]][synthetic_key[2]][2][
+                "symbol"]
+            call_order = [synthetic_key[0], call_symbol, "S" if v_sign > 0 else "B", order_volume]
+            put_order = [synthetic_key[0], put_symbol, "S" if -v_sign > 0 else "B", order_volume]
+            order_list.append(call_order)
+            order_list.append(put_order)
+
+        self.make_order(order_list)
+
+    def make_order(self, order_list: list):
+        pass
+
+    def calc_delta_change(self) -> float:
+        return self.total_delta - self.calc_total_pos_delta()
+
 
 
 _delta_hedge = None
@@ -432,20 +476,21 @@ if __name__ == '__main__':
     # delta.set_trade_account(["177"])
     # delta.set_trade_account(["178"])
     # delta.set_trade_account(["178", "177"])
-    delta.set_trade_account(["166", "167"])
-    # delta.set_trade_account(["178", "177", "176"])
+    # delta.set_trade_account(["166", "167"])
+    delta.set_trade_account(["178", "177", "176"])
     # delta.set_target_underlying_list(["510050"])
     # delta.set_target_underlying_list(["510300"])
     # delta.set_target_underlying_list(["159919"])
-    # delta.set_target_underlying_list(["000300"])
-    delta.set_target_underlying_list(["510300", "000300"])
+    delta.set_target_underlying_list(["000300"])
+    # delta.set_target_underlying_list(["510300", "000300"])
     # delta.set_target_underlying_list(["510300", "159919", "000300"])
 
-    option_trade_ob.login_account(accounts["166"])
-    option_trade_ob.login_account(accounts["167"])
+    # option_trade_ob.login_account(accounts["166"])
+    # option_trade_ob.login_account(accounts["167"])
     # option_trade_ob.login_account(accounts["222"])
-
-    # future_trade_ob.login_account(accounts["176"])
+    option_trade_ob.login_account(accounts["178"])
+    option_trade_ob.login_account(accounts["177"])
+    future_trade_ob.login_account(accounts["176"])
     # stock_trade_ob.login_account(accounts[""])
 
     time.sleep(20)
@@ -459,4 +504,5 @@ if __name__ == '__main__':
         buy_call_quote, buy_put_quote = delta.get_trade_synthetic_future_quote()
 
         total_delta = delta.calc_total_pos_delta()
-        print(total_delta, total_delta // 10000 // 10000 // 10000)
+        display_total_delta = round(total_delta / 10000)
+        print(total_delta, display_total_delta)

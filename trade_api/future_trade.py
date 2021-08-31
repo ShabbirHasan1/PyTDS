@@ -238,23 +238,16 @@ class FutureTrade(object):
 
         # save position for delta
         product = position_data["symbol"][:2]
-        if product == "IC":
-            underlying = "000300"
-        elif product == "IF":
-            underlying = "159919"
-        elif product == "IH":
-            underlying = "510300"
-        else:
+        if product != "IC" and product != "IF" and product != "IH":
             self.position_data_lock.release()
             return
         if position_data["account"] not in self.position_for_delta:
             self.position_for_delta[position_data["account"]] = {}
-        if underlying not in self.position_for_delta[position_data["account"]]:
-            self.position_for_delta[position_data["account"]][underlying] = {}
-        if position_data["symbol"] not in self.position_for_delta[position_data["account"]][underlying]:
-            self.position_for_delta[position_data["account"]][underlying][position_data["symbol"]] = {}
-        self.position_for_delta[position_data["account"]][underlying][position_data["symbol"]][position_data["posType"]] = position_data
-
+        if product not in self.position_for_delta[position_data["account"]]:
+            self.position_for_delta[position_data["account"]][product] = {}
+        if position_data["symbol"] not in self.position_for_delta[position_data["account"]][product]:
+            self.position_for_delta[position_data["account"]][product][position_data["symbol"]] = {}
+        self.position_for_delta[position_data["account"]][product][position_data["symbol"]][position_data["posType"]] = position_data
 
         self.position_data_lock.release()
 
