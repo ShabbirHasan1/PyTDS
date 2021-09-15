@@ -7,8 +7,11 @@ from config.config import get_app_config, AppConfig
 import threading
 from queue import Queue
 import copy
+from data.quote_data import get_contract
 
-_final_status = {"F", "T", "C", "B", "R"}
+_final_status = {"T", "C", "B", "R"}
+_to_chase_status = {"C", "B"}
+_pending_status = {"A", "P"}
 
 
 class OptionTrade(object):
@@ -18,14 +21,21 @@ class OptionTrade(object):
         self.seq_num = 0
         self.api_pool = get_api_pool()
 
+        self.contract_dict = get_contract().opt_contract
+
         self.order_data_lock = threading.Lock()
         self.order_data = {}
+        self.group_order_data = {}
+        self.delta_pending_order = {}
         self.trade_data_lock = threading.Lock()
         self.trade_data = []
         self.position_data_lock = threading.Lock()
         self.position_data = {}
         self.group_position_data = {}
         self.position_for_delta = {}
+
+        self.tick_num = 1
+        self.chase_limit = 5
 
         self.seq_num_lock = threading.Lock()
         self.query_order_queue = Queue()
@@ -166,6 +176,11 @@ class OptionTrade(object):
         self.opt_wrapper.opt_api_set_cb_rsp_query_exec_order(opt_api_t, self.on_rsp_query_exec_order_cb)
         self.opt_wrapper.opt_api_set_cb_rtn_exec_order(opt_api_t, self.on_rtn_exec_order_cb)
 
+    def make_order(self, order_info: dict) -> None:
+        order_list = self.create_priority_order(order_info)
+        for order in order_list:
+            self.entrust_order(order)
+
     def entrust_order(self, order_info: dict) -> None:
         order_id = self.gen_seq_num()
         entrust = STesOptEntrustOrder(
@@ -175,17 +190,87 @@ class OptionTrade(object):
             orderPriceType=order_info["orderPriceType"].encode(),
             direction=order_info["direction"].encode(),
             offset=order_info["offset"].encode(),
-            hedgeFlag=order_info["hedgeFlag"].encode(),
+            hedgeFlag=order_info["hedgeFlag"],
             price=order_info["price"],
             volume=order_info["volume"],
             clientID=order_info["clientID"],
-            orderID=order_id,
-            tradeCode=order_info["trackCode"].decode()
+            orderID=order_info["orderID"] if "orderID" in order_info else order_id,
+            trackCode=order_info["trackCode"].encode(),
         )
         err = STesError()
         self.opt_wrapper.opt_api_entrust(order_info["api_t"], byref(entrust), order_id, byref(err))
         if err.errid != 0:
             logging.error("error occurred when entrust order, err msg: " + str(get_data(err)))
+
+    def create_priority_order(self, order_info: dict, buy_priority: str = "C", sell_priority: str = "C"):
+        if order_info["offset"] != "A":
+            return [order_info]
+        long_total_pos = None
+        long_frozen_close_pos = None
+        short_total_pos = None
+        short_frozen_close_pos = None
+        order_list = []
+
+        self.position_data_lock.acquire()
+        if order_info["symbol"] in self.group_position_data[order_info["account"]]:
+            symbol_pos = self.group_position_data[order_info["account"]][order_info["symbol"]][order_info["hedgeFlag"]]
+            if 1 in symbol_pos:
+                long_total_pos = symbol_pos[1]["totalPos"]
+                long_frozen_close_pos = symbol_pos[1]["frozenClosePos"]
+            if 2 in symbol_pos:
+                short_total_pos = symbol_pos[2]["totalPos"]
+                short_frozen_close_pos = symbol_pos[2]["frozenClosePos"]
+        self.position_data_lock.release()
+
+        if order_info["direction"] == "B":
+            if buy_priority == "O":
+                order_info["offset"] = "O"
+                order_list.append(order_info)
+            else:
+                if short_total_pos is None:
+                    order_info["offset"] = "O"
+                    order_list.append(order_info)
+                elif short_total_pos - short_frozen_close_pos > 0:
+                    if short_total_pos - short_frozen_close_pos - order_info["volume"] < 0:
+                        open_order = copy.deepcopy(order_info)
+                        open_order["volume"] = order_info["volume"] - short_total_pos + short_frozen_close_pos
+                        open_order["offset"] = "O"
+                        close_order = copy.deepcopy(order_info)
+                        close_order["volume"] = short_total_pos - short_frozen_close_pos
+                        close_order["offset"] = "C"
+                        order_list.append(open_order)
+                        order_list.append(close_order)
+                    else:
+                        order_info["offset"] = "C"
+                        order_list.append(order_info)
+                else:
+                    order_info["offset"] = "O"
+                    order_list.append(order_info)
+        else:
+            if sell_priority == "O":
+                order_info["offset"] = "O"
+                order_list.append(order_info)
+            else:
+                if long_total_pos is None:
+                    order_info["offset"] = "O"
+                    order_list.append(order_info)
+                elif long_total_pos - long_frozen_close_pos > 0:
+                    if long_total_pos - long_frozen_close_pos - order_info["volume"] < 0:
+                        open_order = copy.deepcopy(order_info)
+                        open_order["volume"] = order_info["volume"] - long_total_pos + long_frozen_close_pos
+                        open_order["offset"] = "O"
+                        close_order = copy.deepcopy(order_info)
+                        close_order["volume"] = long_total_pos - long_frozen_close_pos
+                        close_order["offset"] = "C"
+                        order_list.append(open_order)
+                        order_list.append(close_order)
+                    else:
+                        order_info["offset"] = "C"
+                        order_list.append(order_info)
+                else:
+                    order_info["offset"] = "O"
+                    order_list.append(order_info)
+        return order_list
 
     def cancel_order(self, order_info: dict, chase_flag: bool = False) -> None:
         if chase_flag:
@@ -211,21 +296,85 @@ class OptionTrade(object):
 
     def save_order(self, order: STesOptOrder, opt_api_t: int) -> None:
         order_data = get_data(order)
-        order_data["api_t"] = opt_api_t
-        order_ref = order_data["orderRef"]
-        self.order_data_lock.acquire()
-        if order_ref in self.order_data and self.order_data[order_ref]["orderStatus"] in _final_status:
-            logging.warning("order time sequence warning, orderRef: {0}".format(order_ref))
-            self.order_data_lock.release()
+
+        if "delta" not in order_data["trackCode"]:
             return
 
+        print(order_data)
+        # trade_code_type, chase_count = order_data["trackCode"].split("_")
+        # chase_count = int(chase_count)
+        # print("chase_count:", chase_count)
+        # print(trade_code_type + "_" + str(chase_count + 1))
+
+        order_data["api_t"] = opt_api_t
+        order_ref = order_data["orderRef"]
+        order_status = order_data["orderStatus"]
+        order_cancel_status = order_data["orderCancelStatus"]
+
+        self.order_data_lock.acquire()
+        # if order_ref in self.order_data and self.order_data[order_ref]["orderStatus"] in _final_status:
+        #     logging.warning("order time sequence warning, orderRef: {0}".format(order_ref))
+        #     self.order_data_lock.release()
+        #     return
         self.order_data[order_ref] = order_data
+
+        if order_status not in _final_status:
+            self.delta_pending_order[order_ref] = order_data
+        else:
+            if order_ref in self.delta_pending_order:
+                self.delta_pending_order.pop(order_ref)
+
         self.order_data_lock.release()
-        # todo: chase order
+
+        if order_status in _pending_status and order_cancel_status == "U":
+            self.cancel_order(order_data)
+
+        if order_status in _to_chase_status and order_cancel_status == "C":
+            trade_code_type, chase_count = order_data["trackCode"].split("_")
+            chase_count = int(chase_count)
+
+            if chase_count < self.chase_limit:
+                if order_data["direction"] == "B":
+                    price = order_data["price"] + self.contract_dict[order_data["symbol"]]["priceTick"] * self.tick_num
+                else:
+                    price = order_data["price"] - self.contract_dict[order_data["symbol"]]["priceTick"] * self.tick_num
+                if order_data["underlyingCode"] != "000300":
+                    price = round(price, 4)
+                else:
+                    price = round(price, 2) * 100
+                    if price % 2 != 0:
+                        price = (price - 1) / 100
+                    else:
+                        price = price / 100
+                track_code: str = trade_code_type + "_" + str(chase_count + 1)
+
+                order_info = {
+                    "api_t": opt_api_t,
+                    "account": order_data["account"],
+                    "symbol": order_data["symbol"],
+                    "exchange": order_data["exchange"],
+                    "orderPriceType": order_data["orderPriceType"],
+                    "direction": order_data["direction"],
+                    "offset": order_data["offset"],
+                    "hedgeFlag": order_data["hedgeFlag"],
+                    "price": price,
+                    "volume": order_data["volume"] - order_data["tradeVolume"],
+                    "clientID": order_data["clientID"],
+                    "trackCode": track_code,
+                }
+                print("to chase order info: \n", order_info)
+                self.entrust_order(order_info)
+
 
     def get_order(self, order_ref: str) -> dict:
         self.order_data_lock.acquire()
         res = copy.deepcopy(self.order_data[order_ref])
+        self.order_data_lock.release()
+        return res
+
+    def get_group_order(self):
+        self.order_data_lock.acquire()
+        res = copy.deepcopy(self.group_order_data)
         self.order_data_lock.release()
         return res
 
@@ -285,6 +434,18 @@ class OptionTrade(object):
     def get_position(self, key: tuple) -> dict:
         self.position_data_lock.acquire()
         res = copy.deepcopy(self.position_data[key])
+        self.position_data_lock.release()
+        return res
+
+    def get_symbol_position(self, account: str, symbol: str):
+        self.position_data_lock.acquire()
+        if account in self.group_position_data:
+            if symbol in self.group_position_data[account]:
+                res = copy.deepcopy(self.group_position_data[account][symbol])
+            else:
+                res = {}
+        else:
+            res = {}
         self.position_data_lock.release()
         return res
 

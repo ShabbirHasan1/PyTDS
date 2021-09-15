@@ -144,12 +144,12 @@ class FutureTrade(object):
             orderPriceType=order_info["orderPriceType"].encode(),
             direction=order_info["direction"].encode(),
             offset=order_info["offset"].encode(),
-            hedgeFlag=order_info["hedgeFlag"].encode(),
+            hedgeFlag=order_info["hedgeFlag"],
             price=order_info["price"],
             volume=order_info["volume"],
             clientID=order_info["clientID"],
             orderID=order_id,
-            tradeCode=order_info["trackCode"]
+            trackCode=order_info["trackCode"].encode()
         )
         err = STesError()
         self.ftr_wrapper.ftr_api_entrust(order_info["api_t"], byref(entrust), order_id, byref(err))

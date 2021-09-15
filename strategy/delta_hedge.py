@@ -16,7 +16,16 @@ import datetime
 import threading
 from typing import List, Set
 from decimal import Decimal
+import math
 
+_final_status = {"F", "T", "C", "B", "R", "D"}
+_underlying_level = {
+    "510050": 5,
+    "510300": 5,
+    "159919": 5,
+    "000300": 1
+}
+_hedge_flag = 1
 
 @decorator
 def timer(func, *args, **kwargs):
@@ -26,286 +35,77 @@ def timer(func, *args, **kwargs):
     return res
 
 
-_underlying_level = {
-    "510050": 5,
-    "510300": 5,
-    "159919": 5,
-    "000300": 1
-}
-
-
 class DeltaHedge(object):
     def __init__(self) -> None:
         self.lock = threading.Lock()
+
+        account_ob = get_account()
+        self.accounts = account_ob.get_account()
+
         contract_ob = get_contract()
         self.opt_contracts = contract_ob.opt_contract
         self.ftr_contracts = contract_ob.ftr_contract
         self.stk_contracts = contract_ob.stk_contract
-        self.opt_underlying_total_count = contract_ob.opt_underlying_total_count
         self.opt_synthetic_group = contract_ob.opt_group_for_synthetic
-        self.wing_model_vol_stream_data = get_wing_model_vol_stream_data()
+
+        self.opt_quote_ob = get_opt_quote_data()
+        self.ftr_quote_ob = get_ftr_quote_data()
+        self.stk_quote_ob = get_stk_quote_data()
+        self.opt_wing_ob = get_wing_model_vol_stream_data()
+
+        self.opt_trade_ob = get_option_trade()
+        self.ftr_trade_ob = get_future_trade()
+        self.stk_trade_ob = get_stock_trade()
+
+        self.option_account_id = ""
+        self.option_account_api_t = 0
+        self.option_account_client_id = 0
+        self.index_option_account_id = ""
+        self.index_option_account_api_t = 0
+        self.index_option_account_client_id = 0
+        self.future_account_id = ""
+        self.future_account_api_t = 0
+        self.future_account_client_id = 0
+        self.stock_account_id = ""
+        self.stock_account_api_t = 0
+        self.stock_account_client_id = 0
+        self.trade_account_set = set()
+        self.trade_account_set.add(self.option_account_id)
+        self.trade_account_set.add(self.index_option_account_id)
+        self.trade_account_set.add(self.future_account_id)
+        self.trade_account_set.add(self.stock_account_id)
+
+        self.underlying_set = set()
+
+        self.chase_limit_num = 5
+        self.tick_num = 0
+
+        self.cur_total_pos_delta = 0
         self.delta_multiplier = 10000
         self.delta_target = 0 * self.delta_multiplier
         self.delta_threshold = 100 * self.delta_multiplier
-        self.delta_warning = 200 * self.delta_multiplier
-        self.target_underlying_list: List[str] = []
-        # 1 buy call sell put, 2 buy put sell call
-        self.buy_synthetic = {1: set(), 2: set()}
-        self.selected_synthetic: Set[tuple] = set()
-        self.buy_call_synthetic_quote = {}
-        self.buy_put_synthetic_quote = {}
-        self.trade_account_list: List[str] = []
-        self.option_trade_account = ""
-        self.index_option_trade_account = ""
-        self.future_trade_account = ""
-        self.stock_trade_account = ""
-        self.opt_quote_data_ob = get_opt_quote_data()
-        self.ftr_quote_data_ob = get_ftr_quote_data()
-        self.stk_quote_data_ob = get_stk_quote_data()
-        self.tick_num = 0
+        self.delta_limit = 50000 * self.delta_multiplier
 
-        self.total_delta = 0
+        # (underlying, expire date, strike price)
+        self.to_buy_synthetic_set = set()
+        self.to_sell_synthetic_set = set()
 
-        self.api_pool = get_api_pool()
-        account_ob = get_account()
-        self.accounts = account_ob.get_account()
-        self.app_config = get_app_config()
-        self.option_trade_ob = get_option_trade()
-        self.future_trade_ob = get_future_trade()
-        self.stock_trade_ob = get_stock_trade()
-        self.trade_is_ready = False
-        self.quote_is_ready = False
+        # synthetic with quote
+        self.to_buy_synthetic_list = []
+        self.to_sell_synthetic_list = []
 
-    def set_target_underlying_list(self, underlying_list: list) -> bool:
-        if not isinstance(underlying_list, list):
-            logging.error("target underlying must be a list")
-            return False
-        for underlying in underlying_list:
-            if underlying not in self.opt_underlying_total_count:
-                logging.error("underlying %s is illegal" % underlying)
-                self.target_underlying_list.clear()
-                return False
-            if underlying in self.target_underlying_list:
-                logging.warning("duplicate target underlying %s, ignored" % underlying)
-                continue
-            self.target_underlying_list.append(underlying)
-        return True
+        self.to_order_symbol_pos = dict()
 
-    def set_tick_num(self, tick_num: int) -> bool:
-        if not isinstance(tick_num, int):
-            logging.error("tick num must be int")
-            return False
-        self.tick_num = tick_num
-        return True
-
-    # (underlying, expire_date, strike_price, buy_type)
-    def set_buy_synthetic(self, synthetic_list: List[tuple]) -> bool:
-        if not isinstance(synthetic_list, list):
-            logging.error("trade synthetic must be a list")
-            return False
-        for e in synthetic_list:
-            if e[0] not in self.opt_synthetic_group:
-                logging.error("cannot find underlying %s" % e[0])
-                self.buy_synthetic.clear()
-                return False
-            if e[1] not in self.opt_synthetic_group[e[0]]:
-                logging.error("cannot find expire date %s for underlying %s" % (e[1], e[0]))
-                self.buy_synthetic.clear()
-                return False
-            if e[2] not in self.opt_synthetic_group[e[0]][e[1]]:
-                logging.error("cannot find strike price %s for underlying %s, expire date %s" % (e[2], e[0], e[1]))
-                self.buy_synthetic.clear()
-                return False
-            synthetic_key = (e[0], e[1], e[2])
-            self.selected_synthetic.add(synthetic_key)
-            if e[3] == 1 or e[3] == "call":
-                self.buy_synthetic[1].add(synthetic_key)
-            elif e[3] == 2 or e[3] == "put":
-                self.buy_synthetic[2].add(synthetic_key)
-            else:
-                self.buy_synthetic.clear()
-                logging.error("type error for current synthetic future %s" % e)
-                return False
-        return True
-
-    def set_trade_account(self, account_list: list) -> bool:
-        if not isinstance(account_list, list):
-            logging.error("trade account must be a list")
-            return False
-        for account in account_list:
-            if account not in self.accounts:
-                logging.error("account %s is illegal" % account)
-                self.trade_account_list.clear()
-                return False
-            self.trade_account_list.append(account)
-        return True
-
-    def check_trade_is_ready(self) -> bool:
-        trade_type_set = set()
-        if self.trade_is_ready:
-            return True
-
-        if not self.tick_num:
-            logging.warning("tick num is not set, default tick num is 0")
-        else:
-            pass
-
-        if not self.buy_synthetic:
-            logging.error("buy synthetic not set yet")
-            return False
-        else:
-            pass
-
-        if not self.target_underlying_list:
-            logging.error("target underlying is not set yet")
-            return False
-        else:
-            pass
-
-        if not self.trade_account_list:
-            logging.error("trade account is not set yet")
-            return False
-        else:
-            for account in self.trade_account_list:
-                api_info = self.api_pool.get_api_info_by_account(account)
-                if not api_info:
-                    logging.error("account %s is not ready" % account)
-                    return False
-                else:
-                    if api_info.get_status() != "ready":
-                        logging.error("account %s is not ready" % account)
-                        return False
-                    else:
-                        pass
-                if self.accounts[account]["trade_type"] in trade_type_set:
-                    logging.error("multiple %s account exist" % self.accounts[account]["trade_type"])
-                    return False
-                trade_type_set.add(self.accounts[account]["trade_type"])
-                if self.accounts[account]["trade_type"] == "OptionTrade":
-                    self.option_trade_account = account
-                elif self.accounts[account]["trade_type"] == "IndexOptionTrade":
-                    self.index_option_trade_account = account
-                elif self.accounts[account]["trade_type"] == "FutureTrade":
-                    self.future_trade_account = account
-                elif self.accounts[account]["trade_type"] == "StockTrade":
-                    self.stock_trade_account = account
-                else:
-                    pass
-
-        for underlying in self.target_underlying_list:
-            if underlying == "510050" or underlying == "510300" or underlying == "159919":
-                if "OptionTrade" not in trade_type_set:
-                    logging.error("option trade account is not ready")
-                    return False
-            if underlying == "000300":
-                if "IndexOptionTrade" not in trade_type_set:
-                    logging.error("index option trade account is not ready")
-                    return False
-
-        self.trade_is_ready = True
-        return True
-
-    def check_quote_is_ready(self) -> bool:
-        if not self.trade_is_ready:
-            logging.error("trade is not ready")
-            return False
-        if self.quote_is_ready:
-            return True
-        wing = get_wing_model_vol_stream_data()
-        wing_data = wing.get_quote()
-        for underlying in self.target_underlying_list:
-            if len(wing_data[underlying]) != self.opt_underlying_total_count[underlying]:
-                logging.error("wing data of underlying %s is not filled" % underlying)
-                return False
-        self.quote_is_ready = True
-        return True
-
-    @timer
-    def get_trade_synthetic_future_quote(self) -> tuple:
-        # cur_quote = self.opt_quote_data_ob.get_quote()
-        opt_quote_index = self.opt_quote_data_ob.get_opt_quote_index()
-        # e[0] underlying e[1] expire date e[2] strike price
-        # synthetic_quote = {}
-        buy_call_synthetic_quote = []
-        buy_put_synthetic_quote = []
-
-        for e in self.selected_synthetic:
-            synthetic_key = (e[0], e[1], e[2])
-            call_contract = self.opt_synthetic_group[e[0]][e[1]][e[2]][1]
-            put_contract = self.opt_synthetic_group[e[0]][e[1]][e[2]][2]
-            # call_quote = cur_quote[call_contract["symbol"]]
-            # put_quote = cur_quote[put_contract["symbol"]]
-            call_quote = self.opt_quote_data_ob.get_quote_with_symbol(call_contract["symbol"])
-            put_quote = self.opt_quote_data_ob.get_quote_with_symbol(put_contract["symbol"])
-            level = _underlying_level[e[0]]
-            buy_call_volume = 0
-            buy_put_volume = 0
-            sell_call_volume = 0
-            sell_put_volume = 0
-            for cur_level in range(1, level + 1):
-                bid_volume_key = "bidVolume%d" % cur_level
-                ask_volume_key = "askVolume%d" % cur_level
-                bid_price_key = "bidPrice%d" % cur_level
-                ask_price_key = "askPrice%d" % cur_level
-                level_key = "level_%d" % cur_level
-
-                buy_call_volume += call_quote[opt_quote_index[bid_volume_key]]
-                buy_put_volume += put_quote[opt_quote_index[ask_volume_key]]
-                sell_call_volume += call_quote[opt_quote_index[ask_volume_key]]
-                sell_put_volume += put_quote[opt_quote_index[bid_volume_key]]
-
-                synthetic_buy_volume = min(buy_call_volume, buy_put_volume)
-                synthetic_sell_volume = min(sell_call_volume, sell_put_volume)
-                synthetic_buy_price = float(
-                    Decimal(str(e[2])) + Decimal(str(call_quote[opt_quote_index[bid_price_key]])) - Decimal(
-                        str(put_quote[opt_quote_index[ask_price_key]])))
-                synthetic_sell_price = float(
-                    Decimal(str(e[2])) + Decimal(str(call_quote[opt_quote_index[ask_price_key]])) - Decimal(
-                        str(put_quote[opt_quote_index[bid_price_key]])))
-
-                cur_synthetic_quote = [synthetic_buy_volume, synthetic_buy_price, synthetic_sell_volume,
-                                       synthetic_sell_price]
-
-                # if synthetic_key not in synthetic_quote:
-                #     synthetic_quote[synthetic_key] = {}
-                # synthetic_quote[synthetic_key][level_key] = cur_synthetic_quote
-
-                if synthetic_key in self.buy_synthetic[1]:
-                    buy_call_synthetic_quote.append([
-                        level_key,
-                        synthetic_buy_volume,
-                        synthetic_buy_price,
-                        synthetic_sell_volume,
-                        synthetic_sell_price,
-                        synthetic_key,
-                    ])
-
-                if synthetic_key in self.buy_synthetic[2]:
-                    buy_put_synthetic_quote.append([
-                        level_key,
-                        synthetic_buy_volume,
-                        synthetic_buy_price,
-                        synthetic_sell_volume,
-                        synthetic_sell_price,
-                        synthetic_key,
-                    ])
-
-        buy_call_synthetic_quote = sorted(buy_call_synthetic_quote, key=lambda e: e[2])
-        buy_put_synthetic_quote = sorted(buy_put_synthetic_quote, key=lambda e: e[4])
-
-        return buy_call_synthetic_quote, buy_put_synthetic_quote
-
-    @timer()
-    def calc_total_pos_delta(self) -> float:
+    def calc_total_pos_delta(self) -> None:
         total_delta = 0
-        opt_pos_data = self.option_trade_ob.get_position_for_delta()
-        ftr_pos_data = self.future_trade_ob.get_position_for_delta()
-        stk_pos_data = self.stock_trade_ob.get_position_for_delta()
+        opt_pos_data = self.opt_trade_ob.get_position_for_delta()
+        ftr_pos_data = self.ftr_trade_ob.get_position_for_delta()
+        stk_pos_data = self.stk_trade_ob.get_position_for_delta()
         for account in opt_pos_data:
-            if account not in self.trade_account_list:
+            if account not in self.trade_account_set:
                 continue
             for underlying in opt_pos_data[account]:
-                if underlying not in self.target_underlying_list:
+                if underlying not in self.underlying_set:
                     continue
                 for symbol in opt_pos_data[account][underlying]:
                     total_pos = 0
@@ -316,17 +116,17 @@ class DeltaHedge(object):
                             total_pos -= opt_pos_data[account][underlying][symbol][pos_type]["totalPos"]
                     if total_pos == 0:
                         continue
-                    total_delta += total_pos * self.wing_model_vol_stream_data.get_delta_by_symbol(
-                        symbol) * self.wing_model_vol_stream_data.get_future_price_by_symbol(symbol) * \
+                    total_delta += total_pos * self.opt_wing_ob.get_delta_by_symbol(
+                        symbol) * self.opt_wing_ob.get_future_price_by_symbol(symbol) * \
                                    self.opt_contracts[symbol]["multiple"]
 
         product_list = []
         for account in ftr_pos_data:
-            if account not in self.trade_account_list:
+            if account not in self.trade_account_set:
                 continue
-            if "510050" in self.target_underlying_list:
+            if "510050" in self.underlying_set:
                 product_list.append("IH")
-            if "510300" in self.target_underlying_list or "000300" in self.target_underlying_list or "159919" in self.target_underlying_list:
+            if "510300" in self.underlying_set or "000300" in self.underlying_set or "159919" in self.underlying_set:
                 product_list.append("IF")
             for product in ftr_pos_data[account]:
                 if product not in product_list:
@@ -340,104 +140,362 @@ class DeltaHedge(object):
                             total_pos -= ftr_pos_data[product][symbol][pos_type]["totalPos"]
                     if total_pos == 0:
                         continue
-                    total_delta += total_pos * self.ftr_quote_data_ob.get_quote_with_symbol(symbol) * \
+                    total_delta += total_pos * self.ftr_quote_ob.get_last_price_by_symbol(symbol) * \
                                    self.ftr_contracts[symbol]["multiple"]
 
         for account in stk_pos_data:
-            if account not in self.trade_account_list:
+            if account not in self.trade_account_set:
                 continue
             for symbol in stk_pos_data[account]:
-                if symbol not in self.target_underlying_list:
+                if symbol not in self.underlying_set:
                     continue
                 if stk_pos_data[account][symbol]["totalPos"] == 0:
                     continue
-                total_delta += stk_pos_data[account][symbol]["totalPos"] * self.stk_quote_data_ob.get_quote_with_symbol(
+                total_delta += stk_pos_data[account][symbol][
+                                   "totalPos"] * self.stk_quote_ob.get_last_price_by_symbol(
                     symbol)
 
-        return total_delta
+        self.cur_total_pos_delta = total_delta
+        print("total pos delta:", total_delta, total_delta // self.delta_multiplier)
 
-    @timer
-    def calc_synthetic_volume(self, delta_diff: float):
-        # 都取上300近月最优价格
-        best_syn_f = self.wing_model_vol_stream_data.get_near_best_future_price()
-        volume = round(delta_diff / best_syn_f / 10000)
-        return volume
+    def calc_synthetic_future_quote(self) -> None:
+        opt_quote_index = self.opt_quote_ob.get_opt_quote_index()
+        to_buy_synthetic_list = []
+        to_sell_synthetic_list = []
 
-    @timer
-    def start_delta_hedge(self):
-        total_delta = self.calc_total_pos_delta()
-        self.total_delta = total_delta
-        delta_diff = total_delta - self.delta_target
-        if delta_diff >= self.delta_warning:
-            logging.warning("delta reach warning, stop loop")
-            return
-        if delta_diff >= self.delta_threshold:
-            logging.info("reach delta threshold, start hedge")
-            self.do_delta_hedge(total_delta)
-        else:
-            logging.info("not reach delta threshold, do nothing")
+        full_synthetic_set = self.to_buy_synthetic_set.union(self.to_sell_synthetic_set)
 
-    def calc_volume_delta(self, direction: str, symbol: str, volume: int) -> float:
-        cur_delta = volume * self.wing_model_vol_stream_data.get_delta_by_symbol(
-            symbol) * self.wing_model_vol_stream_data.get_future_price_by_symbol(symbol) * self.opt_contracts[symbol][
-                        "multiple"] * volume * 1 if direction == "B" else -1
-        return cur_delta
+        for e in full_synthetic_set:
+            call_contract = self.opt_synthetic_group[e[0]][e[1]][e[2]][1]
+            put_contract = self.opt_synthetic_group[e[0]][e[1]][e[2]][2]
 
-    def do_delta_hedge(self, delta_diff: float):
-        buy_call_synthetic_quote, buy_put_synthetic_quote = self.get_trade_synthetic_future_quote()
-        if delta_diff > 0:
-            synthetic_list = buy_put_synthetic_quote
-            v_sign = -1
-            abs_delta_diff = delta_diff
-        else:
-            synthetic_list = buy_call_synthetic_quote
-            v_sign = 1
-            abs_delta_diff = - delta_diff
+            call_quote = self.opt_quote_ob.get_quote_by_symbol(call_contract["symbol"])
+            put_quote = self.opt_quote_ob.get_quote_by_symbol(put_contract["symbol"])
 
-        synthetic_index = 0
-        synthetic_list_length = len(synthetic_list)
-        order_list = []
+            # quote level + 1
+            max_level = _underlying_level[e[0]] + 1
 
-        remain_volume = self.calc_synthetic_volume(abs_delta_diff)
-        while synthetic_index < synthetic_list_length and remain_volume >= 1:
-            best_synthetic = synthetic_list[synthetic_index]
-            available_volume = min(best_synthetic[1], best_synthetic[3])
-            if available_volume < remain_volume:
-                order_volume = available_volume
-                synthetic_key = synthetic_list[synthetic_index][5]
-                synthetic_index += 1
-                remain_volume -= available_volume
+            for cur_level in range(1, max_level):
+                bid_volume_key = "bidVolume%d" % cur_level
+                ask_volume_key = "askVolume%d" % cur_level
+                bid_price_key = "bidPrice%d" % cur_level
+                ask_price_key = "askPrice%d" % cur_level
+
+                buy_call_volume = call_quote[opt_quote_index[bid_volume_key]]
+                buy_put_volume = put_quote[opt_quote_index[bid_volume_key]]
+                sell_call_volume = call_quote[opt_quote_index[ask_volume_key]]
+                sell_put_volume = put_quote[opt_quote_index[ask_volume_key]]
+
+                synthetic_buy_volume = min(buy_call_volume, sell_put_volume)
+                synthetic_sell_volume = min(sell_call_volume, buy_put_volume)
+
+                call_bid_price = call_quote[opt_quote_index[bid_price_key]]
+                call_ask_price = call_quote[opt_quote_index[ask_price_key]]
+                put_bid_price = put_quote[opt_quote_index[bid_price_key]]
+                put_ask_price = put_quote[opt_quote_index[ask_price_key]]
+
+                synthetic_buy_price = e[2] + call_bid_price - put_ask_price
+                synthetic_sell_price = e[2] + call_ask_price - put_bid_price
+
+                if call_bid_price == 0:
+                    continue
+                if call_ask_price == 0:
+                    continue
+                if put_bid_price == 0:
+                    continue
+                if put_ask_price == 0:
+                    continue
+
+                if e in self.to_buy_synthetic_set:
+                    # [synthetic volume, synthetic price, buy contract, buy price, sell contract, sell price]
+                    to_buy_synthetic_list.append([
+                        synthetic_buy_volume,
+                        synthetic_buy_price,
+                        call_contract,  # buy call contract
+                        call_ask_price,  # buy with call ask price
+                        put_contract,  # sell put contract
+                        put_bid_price  # sell with put bid price
+                    ])
+
+                if e in self.to_sell_synthetic_set:
+                    # [synthetic volume, synthetic price, buy contract, buy price, sell contract, sell price]
+                    to_sell_synthetic_list.append([
+                        synthetic_sell_volume,
+                        synthetic_sell_price,
+                        put_contract,  # buy put contract
+                        put_ask_price,  # buy with put ask price
+                        call_contract,  # sell call contract
+                        call_bid_price  # sell with call bid price
+                    ])
+
+        self.to_buy_synthetic_list = sorted(to_buy_synthetic_list, key=lambda e: e[1])
+        self.to_sell_synthetic_list = sorted(to_sell_synthetic_list, key=lambda e: e[1], reverse=True)
+
+    def calc_synthetic_volume(self, delta_diff: float) -> int:
+        best_syn_f = self.opt_wing_ob.get_near_best_future_price()
+        volume = delta_diff / best_syn_f / 10000
+        print("to order volume:", int(volume))
+        return int(volume)
+
+    def calc_orders(self, delta_diff: float) -> list:
+        closeable_pos_dict = {}
+        to_order_symbol_set = set()
+        api_pool = get_api_pool()
+        if self.option_account_id:
+            option_api_info = api_pool.get_api_info_by_account(self.option_account_id)
+            if not option_api_info:
+                print("option account not connected")
+                return []
             else:
-                order_volume = remain_volume
-                synthetic_key = synthetic_list[synthetic_index][5]
+                self.option_account_api_t = option_api_info.get_api_t()
+                if not self.option_account_api_t:
+                    print("option account not connected")
+                    return []
+                self.option_account_client_id = option_api_info.get_client_id()
+                if not self.option_account_client_id:
+                    print("option account not connected")
+                    return []
+        if self.index_option_account_id:
+            index_option_api_info = api_pool.get_api_info_by_account(self.index_option_account_id)
+            if not index_option_api_info:
+                print("index option account not connected")
+                return []
+            else:
+                self.index_option_account_api_t = index_option_api_info.get_api_t()
+                if not self.index_option_account_api_t:
+                    print("index option account not connected")
+                    return []
+                self.index_option_account_client_id = index_option_api_info.get_client_id()
+                if not self.index_option_account_client_id:
+                    print("index option account not connected")
+                    return []
+        if self.future_account_id:
+            # todo
+            pass
+        if self.stock_account_id:
+            # todo
+            pass
 
-            call_symbol = self.opt_synthetic_group[synthetic_key[0]][synthetic_key[1]][synthetic_key[2]][1][
-                "symbol"]
-            put_symbol = self.opt_synthetic_group[synthetic_key[0]][synthetic_key[1]][synthetic_key[2]][2][
-                "symbol"]
-            call_order = [synthetic_key[0], call_symbol, "S" if v_sign > 0 else "B", order_volume]
-            put_order = [synthetic_key[0], put_symbol, "S" if -v_sign > 0 else "B", order_volume]
-            order_list.append(call_order)
-            order_list.append(put_order)
+        remain_volume = self.calc_synthetic_volume(delta_diff)
+        if remain_volume > 0:
+            synthetic_list = self.to_sell_synthetic_list
+        elif remain_volume < 0:
+            remain_volume = -remain_volume
+            synthetic_list = self.to_buy_synthetic_list
+        else:
+            print("to order volume is zero")
+            return []
 
-        self.make_order(order_list)
+        synthetic_list_length = len(synthetic_list)
+        order_info_list = []
+        synthetic_index = 0
 
-    def make_order(self, order_list: list):
-        pass
+        while remain_volume > 0 and synthetic_index < synthetic_list_length:
+            best_synthetic = synthetic_list[synthetic_index]
+            best_available_volume = best_synthetic[0]
+            if best_available_volume >= remain_volume:
+                volume = remain_volume
+            else:
+                volume = best_available_volume
 
-    def calc_delta_change(self) -> float:
-        return self.total_delta - self.calc_total_pos_delta()
+            buy_contract = best_synthetic[2]
+            cur_buy_symbol = buy_contract["symbol"]
+
+            if cur_buy_symbol not in to_order_symbol_set:
+                to_order_symbol_set.add(cur_buy_symbol)
+                closeable_pos_dict[cur_buy_symbol] = self.calc_to_order_symbol_pos(buy_contract)
+
+            buy_quote_price = best_synthetic[3]
+            order_info_list += (self.gen_order_info(1, buy_contract, buy_quote_price, volume, closeable_pos_dict[cur_buy_symbol]))
+
+            sell_contract = best_synthetic[4]
+            cur_sell_symbol = sell_contract["symbol"]
+
+            if cur_sell_symbol not in to_order_symbol_set:
+                to_order_symbol_set.add(cur_sell_symbol)
+                closeable_pos_dict[cur_sell_symbol] = self.calc_to_order_symbol_pos(sell_contract)
+
+            sell_quote_price = best_synthetic[5]
+            order_info_list += (self.gen_order_info(2, sell_contract, sell_quote_price, volume, closeable_pos_dict[cur_sell_symbol]))
+
+            remain_volume -= volume
+            synthetic_index += 1
+
+        return order_info_list
+
+    def calc_to_order_symbol_pos(self, contract: dict) -> dict:
+        closeable_pos = {
+            1: 0,
+            2: 0
+        }
+        if contract["underlyingCode"] == "000300":
+            account = self.index_option_account_id
+        else:
+            account = self.option_account_id
+
+        position = self.opt_trade_ob.get_symbol_position(contract["symbol"], account)
+        if position:
+            for pos_type in position[_hedge_flag]:
+                cur_pos = position[_hedge_flag][pos_type]
+                closeable_pos[pos_type] = cur_pos["totalPos"] - cur_pos["frozenClosePos"]
+
+        return closeable_pos
+
+    def gen_order_info(self, direction: int, contract: dict, quote_price: float, volume: int, closeable_pos: dict) -> list:
+        res = []
+        underlying = contract["underlyingCode"]
+        tick = contract["priceTick"]
+        symbol = contract["symbol"]
+        exchange = contract["exchange"]
+
+        actual_direction = "B" if direction == 1 else "S"
+
+        if underlying == "000300":
+            account_id = self.index_option_account_client_id
+            client_id = self.index_option_account_client_id
+            api_t = self.index_option_account_api_t
+        else:
+            account_id = self.option_account_id
+            client_id = self.option_account_client_id
+            api_t = self.option_account_api_t
+
+        price = quote_price + self.tick_num * tick if direction == 1 else quote_price - self.tick_num * tick
+
+        if underlying != "000300":
+            price = round(price, 4)
+        else:
+            price = round(price, 2) * 100
+            if price % 2 != 0:
+                price = (price - 1) / 100
+            else:
+                price = price / 100
+
+        closeable_volume = closeable_pos[direction]
+
+        if not closeable_volume:
+            order_info = {
+                "api_t": api_t,
+                "account": account_id,
+                "symbol": symbol,
+                "exchange": exchange,
+                "orderPriceType": "L",
+                "direction": actual_direction,
+                "offset": "O",
+                "hedgeFlag": 1,
+                "price": price,
+                "volume": volume,
+                "clientID": client_id,
+                "trackCode": "delta_0"
+            }
+            res.append(order_info)
+        else:
+            if volume > closeable_volume:
+                close_order_info = {
+                    "api_t": api_t,
+                    "account": account_id,
+                    "symbol": symbol,
+                    "exchange": exchange,
+                    "orderPriceType": "L",
+                    "direction": actual_direction,
+                    "offset": "C",
+                    "hedgeFlag": 1,
+                    "price": price,
+                    "volume": closeable_volume,
+                    "clientID": client_id,
+                    "trackCode": "delta_0"
+                }
+                res.append(close_order_info)
+                open_order_info = {
+                    "api_t": api_t,
+                    "account": account_id,
+                    "symbol": symbol,
+                    "exchange": exchange,
+                    "orderPriceType": "L",
+                    "direction": actual_direction,
+                    "offset": "O",
+                    "hedgeFlag": 1,
+                    "price": price,
+                    "volume": volume - closeable_volume,
+                    "clientID": client_id,
+                    "trackCode": "delta_0"
+                }
+                res.append(open_order_info)
+                closeable_pos[direction] = 0
+            else:
+                close_order_info = {
+                    "api_t": api_t,
+                    "account": account_id,
+                    "symbol": symbol,
+                    "exchange": exchange,
+                    "orderPriceType": "L",
+                    "direction": actual_direction,
+                    "offset": "C",
+                    "hedgeFlag": 1,
+                    "price": price,
+                    "volume": volume,
+                    "clientID": client_id,
+                    "trackCode": "delta_0"
+                }
+                res.append(close_order_info)
+                closeable_pos[direction] -= volume
+
+        return res
+
+    def make_order(self, order_info_list: list) -> None:
+        # todo: assign tick
+        for order_info in order_info_list:
+            print(order_info)
+            self.opt_trade_ob.entrust_order(order_info)
+
+    def test_order(self):
+        account_id = self.option_account_id
+        option_api_info = get_api_pool().get_api_info_by_account(self.option_account_id)
+        api_t = option_api_info.get_api_t()
+        client_id = option_api_info.get_client_id()
+        order_info = {
+            "api_t": api_t,
+            "account": account_id,
+            "symbol": "10003323",
+            "exchange": "SH",
+            "orderPriceType": "L",
+            "direction": "S",
+            "offset": "C",
+            "hedgeFlag": 1,
+            "price": 0.47,
+            "volume": 50,
+            "clientID": client_id,
+            "trackCode": "delta_0"
+        }
+        self.opt_trade_ob.entrust_order(order_info)
 
 
+    def cancel_all_pending_order(self) -> None:
+        for order_info in self.opt_trade_ob.delta_pending_order.values():
+            self.opt_trade_ob.cancel_order(order_info)
 
-_delta_hedge = None
+    def do_delta_hedge(self):
+        self.calc_total_pos_delta()
+        delta_diff = self.cur_total_pos_delta - self.delta_target
+        if abs(delta_diff) > self.delta_threshold:
+            self.calc_synthetic_future_quote()
+            order_info_list = self.calc_orders(delta_diff)
+            self.make_order(order_info_list)
+            time.sleep(0.5)
+
+    def start(self):
+        while True:
+            self.calc_total_pos_delta()
+            delta_diff = self.cur_total_pos_delta - self.delta_target
+            if abs(delta_diff) > self.delta_threshold:
+                while abs(delta_diff) / 10000 > self.opt_wing_ob.get_near_best_future_price():
+                    self.calc_synthetic_future_quote()
+                    order_info_list = self.calc_orders(delta_diff)
+                    self.make_order(order_info_list)
+                    time.sleep(0.5)
+                    delta_diff = self.cur_total_pos_delta - self.delta_target
+            time.sleep(0.5)
 
 
-def get_delta_hedge() -> DeltaHedge:
-    global _delta_hedge
-    if not _delta_hedge:
-        _delta_hedge = DeltaHedge()
-    return _delta_hedge
 
 
 if __name__ == '__main__':
@@ -451,58 +509,42 @@ if __name__ == '__main__':
     query_ddb_ob = get_ddb_query()
     recent_wing = query_ddb_ob.query_wing_data()
     recent_option = query_ddb_ob.query_option_quote()
-
     for row in recent_option:
         opt_quote_ob.update_quote(row)
     for row in recent_wing:
         wing_data_ob.update_quote(row)
-    accounts = get_account().accounts
-    option_trade_ob = get_option_trade()
-    future_trade_ob = get_future_trade()
-    stock_trade_ob = get_stock_trade()
+
+
     delta = DeltaHedge()
-    delta.set_tick_num(1)
-    delta.set_buy_synthetic([
-        ("510300", 202109, 4.4, "put"),
-        ("510300", 202109, 4.5, "call"),
-        ("510300", 202109, 4.6, "put"),
-        ("510300", 202109, 4.7, "call"),
-        ("510300", 202109, 4.8, "put"),
-        ("510300", 202109, 4.9, "call"),
-        ("510300", 202109, 5.0, "put"),
-        ("510300", 202109, 5.25, "call"),
-    ])
-    # delta.set_trade_account(["222"])
-    # delta.set_trade_account(["177"])
-    # delta.set_trade_account(["178"])
-    # delta.set_trade_account(["178", "177"])
-    # delta.set_trade_account(["166", "167"])
-    delta.set_trade_account(["178", "177", "176"])
-    # delta.set_target_underlying_list(["510050"])
-    # delta.set_target_underlying_list(["510300"])
-    # delta.set_target_underlying_list(["159919"])
-    delta.set_target_underlying_list(["000300"])
-    # delta.set_target_underlying_list(["510300", "000300"])
-    # delta.set_target_underlying_list(["510300", "159919", "000300"])
+    get_option_trade().login_account(delta.accounts["237"])
+    time.sleep(10)
 
-    # option_trade_ob.login_account(accounts["166"])
-    # option_trade_ob.login_account(accounts["167"])
-    # option_trade_ob.login_account(accounts["222"])
-    option_trade_ob.login_account(accounts["178"])
-    option_trade_ob.login_account(accounts["177"])
-    future_trade_ob.login_account(accounts["176"])
-    # stock_trade_ob.login_account(accounts[""])
+    delta.trade_account_set.add("237")
+    delta.option_account_id = "237"
 
-    time.sleep(20)
-    is_ready = delta.check_trade_is_ready()
+    delta.underlying_set = {"510300"}
 
-    if not is_ready:
-        print("account not ready")
-    else:
-        print("account is ready")
+    delta.to_buy_synthetic_set.add(("510300", 202109, 4.4))
+    delta.to_buy_synthetic_set.add(("510300", 202109, 4.5))
+    delta.to_buy_synthetic_set.add(("510300", 202109, 4.6))
+    delta.to_buy_synthetic_set.add(("510300", 202109, 4.7))
 
-        buy_call_quote, buy_put_quote = delta.get_trade_synthetic_future_quote()
+    delta.to_sell_synthetic_set.add(("510300", 202109, 4.4))
+    delta.to_sell_synthetic_set.add(("510300", 202109, 4.5))
+    delta.to_sell_synthetic_set.add(("510300", 202109, 4.6))
+    delta.to_sell_synthetic_set.add(("510300", 202109, 4.7))
 
-        total_delta = delta.calc_total_pos_delta()
-        display_total_delta = round(total_delta / 10000)
-        print(total_delta, display_total_delta)
+    # delta.calc_total_pos_delta()
+
+    # delta.start()
+
+    #
+    #
+    # delta.do_delta_hedge()
+    # time.sleep(5)
+    # #
+    delta.calc_total_pos_delta()
+    #
+    delta.test_order()
+    time.sleep(3)
+

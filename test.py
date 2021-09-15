@@ -31,7 +31,9 @@ def test(a, b):
 
 
 if __name__ == '__main__':
-    print(type(abs(-1)))
+    a = -1.3
+    import math
+    print(int(a))
 
 
 

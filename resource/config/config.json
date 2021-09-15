@@ -1,6 +1,6 @@
 {
   "webserver_config": {
-    "base_url": "http://10.0.60.58:8000"
+    "base_url": "http://10.0.40.252:8000"
   },
   "dolphin_config": {
     "contract": {

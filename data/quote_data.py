@@ -1,7 +1,5 @@
 import logging
 
-import delta as delta
-
 from data.trade_data import OptPositionData
 from dolphin_db.query_dolphin import get_ddb_query
 import threading
@@ -274,6 +272,16 @@ class Contract(object):
 class OptQuoteData(object):
     def __init__(self) -> None:
         self.symbol_index = _opt_quote_index["symbol"]
+        self.askPrice1_index = _opt_quote_index["askPrice1"]
+        self.askPrice2_index = _opt_quote_index["askPrice2"]
+        self.askPrice3_index = _opt_quote_index["askPrice3"]
+        self.askPrice4_index = _opt_quote_index["askPrice4"]
+        self.askPrice5_index = _opt_quote_index["askPrice5"]
+        self.bidPrice1_index = _opt_quote_index["bidPrice1"]
+        self.bidPrice2_index = _opt_quote_index["bidPrice2"]
+        self.bidPrice3_index = _opt_quote_index["bidPrice3"]
+        self.bidPrice4_index = _opt_quote_index["bidPrice4"]
+        self.bidPrice5_index = _opt_quote_index["bidPrice5"]
         self.quote = {}
         self.lock = threading.Lock()
 
@@ -292,11 +300,74 @@ class OptQuoteData(object):
         self.lock.release()
         return res
 
-    def get_quote_with_symbol(self, symbol: str) -> list:
+    def get_quote_by_symbol(self, symbol: str) -> list:
         self.lock.acquire()
         res = copy.deepcopy(self.quote[symbol])
         self.lock.release()
         return res
+
+    def get_ask1_price_by_symbol(self, symbol: str) -> float:
+        self.lock.acquire()
+        res = self.quote[symbol][self.askPrice1_index]
+        self.lock.release()
+        return res
+
+    def get_bid1_price_by_symbol(self, symbol: str) -> float:
+        self.lock.acquire()
+        res = self.quote[symbol][self.bidPrice1_index]
+        self.lock.release()
+        return res
+
+    def get_ask_price_by_symbol(self, symbol: str, level: int = 1) -> float:
+        if level == 1:
+            self.lock.acquire()
+            res = self.quote[symbol][self.askPrice1_index]
+            self.lock.release()
+        elif level == 2:
+            self.lock.acquire()
+            res = self.quote[symbol][self.askPrice2_index]
+            self.lock.release()
+        elif level == 3:
+            self.lock.acquire()
+            res = self.quote[symbol][self.askPrice3_index]
+            self.lock.release()
+        elif level == 4:
+            self.lock.acquire()
+            res = self.quote[symbol][self.askPrice4_index]
+            self.lock.release()
+        elif level == 5:
+            self.lock.acquire()
+            res = self.quote[symbol][self.askPrice5_index]
+            self.lock.release()
+        else:
+            res = 0.0
+        return res
+
+    def get_bid_price_by_symbol(self, symbol: str, level: int = 1) -> float:
+        if level == 1:
+            self.lock.acquire()
+            res = self.quote[symbol][self.bidPrice1_index]
+            self.lock.release()
+        elif level == 2:
+            self.lock.acquire()
+            res = self.quote[symbol][self.bidPrice2_index]
+            self.lock.release()
+        elif level == 3:
+            self.lock.acquire()
+            res = self.quote[symbol][self.bidPrice3_index]
+            self.lock.release()
+        elif level == 4:
+            self.lock.acquire()
+            res = self.quote[symbol][self.bidPrice4_index]
+            self.lock.release()
+        elif level == 5:
+            self.lock.acquire()
+            res = self.quote[symbol][self.bidPrice5_index]
+            self.lock.release()
+        else:
+            res = 0.0
+        return res
+
 
 class FtrQuoteData(object):
     def __init__(self) -> None:
@@ -320,13 +391,13 @@ class FtrQuoteData(object):
         self.lock.release()
         return res
 
-    def get_quote_with_symbol(self, symbol: str) -> list:
+    def get_quote_by_symbol(self, symbol: str) -> list:
         self.lock.acquire()
         res = copy.deepcopy(self.quote[symbol])
         self.lock.release()
         return res
 
-    def get_last_price_with_symbol(self, symbol: str) -> float:
+    def get_last_price_by_symbol(self, symbol: str) -> float:
         self.lock.acquire()
         res = self.quote[symbol][self.last_price_index]
         self.lock.release()
@@ -354,13 +425,13 @@ class StkQuoteData(object):
         self.lock.release()
         return res
 
-    def get_quote_with_symbol(self, symbol: str) -> list:
+    def get_quote_by_symbol(self, symbol: str) -> list:
         self.lock.acquire()
         res = copy.deepcopy(self.quote[symbol])
         self.lock.release()
         return res
 
-    def get_last_price_with_symbol(self, symbol: str) -> float:
+    def get_last_price_by_symbol(self, symbol: str) -> float:
         self.lock.acquire()
         res = self.quote[symbol][self.last_price_index]
         self.lock.release()

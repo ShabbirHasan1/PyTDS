@@ -149,7 +149,7 @@ class StockTrade(object):
             volume=order_info["volume"],
             clientID=order_info["clientID"],
             orderID=order_id,
-            tradeCode=order_info["trackCode"]
+            trackCode=order_info["trackCode"].encode()
         )
         err = STesError()
         self.stk_wrapper.stk_api_entrust(order_info["api_t"], byref(entrust), order_id, byref(err))

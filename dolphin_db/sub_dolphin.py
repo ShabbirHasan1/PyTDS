@@ -3,7 +3,7 @@ import threading
 from config.config import get_app_config
 import dolphindb as ddb
 import socket
-from strategy.delta_hedge import get_delta_hedge
+
 from data.quote_data import get_wing_model_vol_stream_data, get_contract, get_opt_quote_data, get_ftr_quote_data, get_stk_quote_data
 
 

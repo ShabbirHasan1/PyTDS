@@ -2,3 +2,5 @@ dolphindb
 zmq
 peewee
 numba
+decorator
+requests
