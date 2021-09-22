@@ -364,6 +364,8 @@ class OptionTrade(object):
                 }
                 print("to chase order info: \n", order_info)
                 self.entrust_order(order_info)
+            else:
+                print("warning: chase failed")
 
 
     def get_order(self, order_ref: str) -> dict:
@@ -437,7 +439,7 @@ class OptionTrade(object):
         self.position_data_lock.release()
         return res
 
-    def get_symbol_position(self, account: str, symbol: str):
+    def get_symbol_position(self, symbol: str, account: str):
         self.position_data_lock.acquire()
         if account in self.group_position_data:
             if symbol in self.group_position_data[account]:

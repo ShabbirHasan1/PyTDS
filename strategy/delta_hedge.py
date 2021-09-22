@@ -78,7 +78,7 @@ class DeltaHedge(object):
         self.underlying_set = set()
 
         self.chase_limit_num = 5
-        self.tick_num = 0
+        self.tick_num = 1
 
         self.cur_total_pos_delta = 0
         self.delta_multiplier = 10000
@@ -320,7 +320,6 @@ class DeltaHedge(object):
 
             remain_volume -= volume
             synthetic_index += 1
-
         return order_info_list
 
     def calc_to_order_symbol_pos(self, contract: dict) -> dict:
@@ -334,6 +333,7 @@ class DeltaHedge(object):
             account = self.option_account_id
 
         position = self.opt_trade_ob.get_symbol_position(contract["symbol"], account)
+
         if position:
             for pos_type in position[_hedge_flag]:
                 cur_pos = position[_hedge_flag][pos_type]
@@ -444,7 +444,7 @@ class DeltaHedge(object):
     def make_order(self, order_info_list: list) -> None:
         # todo: assign tick
         for order_info in order_info_list:
-            print(order_info)
+            # print(order_info)
             self.opt_trade_ob.entrust_order(order_info)
 
     def test_order(self):
@@ -486,14 +486,28 @@ class DeltaHedge(object):
         while True:
             self.calc_total_pos_delta()
             delta_diff = self.cur_total_pos_delta - self.delta_target
+            if delta_diff > 0:
+                flag = 1
+            elif delta_diff < 0:
+                flag = -1
+            else:
+                flag = 0
             if abs(delta_diff) > self.delta_threshold:
                 while abs(delta_diff) / 10000 > self.opt_wing_ob.get_near_best_future_price():
                     self.calc_synthetic_future_quote()
                     order_info_list = self.calc_orders(delta_diff)
                     self.make_order(order_info_list)
                     time.sleep(0.5)
+                    self.calc_total_pos_delta()
                     delta_diff = self.cur_total_pos_delta - self.delta_target
+                    if (delta_diff < 0 and flag > 0) or (delta_diff > 0 and flag < 0):
+                        break
+            else:
+                print("no hedge")
+
             time.sleep(0.5)
+
+            self.calc_total_pos_delta()
 
 
 
@@ -514,37 +528,38 @@ if __name__ == '__main__':
     for row in recent_wing:
         wing_data_ob.update_quote(row)
 
-
     delta = DeltaHedge()
-    get_option_trade().login_account(delta.accounts["237"])
+    get_option_trade().login_account(delta.accounts["344"])
     time.sleep(10)
 
-    delta.trade_account_set.add("237")
-    delta.option_account_id = "237"
+    delta.trade_account_set.add("344")
+    delta.option_account_id = "344"
 
     delta.underlying_set = {"510300"}
 
-    delta.to_buy_synthetic_set.add(("510300", 202109, 4.4))
-    delta.to_buy_synthetic_set.add(("510300", 202109, 4.5))
-    delta.to_buy_synthetic_set.add(("510300", 202109, 4.6))
+    # delta.to_buy_synthetic_set.add(("510300", 202109, 4.4))
+    # delta.to_buy_synthetic_set.add(("510300", 202109, 4.5))
+    # delta.to_buy_synthetic_set.add(("510300", 202109, 4.6))
     delta.to_buy_synthetic_set.add(("510300", 202109, 4.7))
 
-    delta.to_sell_synthetic_set.add(("510300", 202109, 4.4))
-    delta.to_sell_synthetic_set.add(("510300", 202109, 4.5))
-    delta.to_sell_synthetic_set.add(("510300", 202109, 4.6))
+    # delta.to_sell_synthetic_set.add(("510300", 202109, 4.4))
+    # delta.to_sell_synthetic_set.add(("510300", 202109, 4.5))
+    # delta.to_sell_synthetic_set.add(("510300", 202109, 4.6))
     delta.to_sell_synthetic_set.add(("510300", 202109, 4.7))
 
+    # while True:
+    #     delta.calc_total_pos_delta()
+    #     time.sleep(1)
+    #
     # delta.calc_total_pos_delta()
-
     # delta.start()
 
     #
     #
     # delta.do_delta_hedge()
-    # time.sleep(5)
+    # time.sleep(10)
     # #
     delta.calc_total_pos_delta()
     #
-    delta.test_order()
-    time.sleep(3)
-
+    # delta.test_order()
+    # time.sleep(3)
